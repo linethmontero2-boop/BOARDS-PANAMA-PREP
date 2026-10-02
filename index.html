@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="BOARDS Panamá Prep AI - Preparación para IFOM y Step 2 CK." />
+  <title>BOARDS Panamá Prep AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-mark">B</div>
+        <div class="brand-copy"><strong>BOARDS</strong><span>Panamá Prep AI</span></div>
+        <button class="sidebar-close mobile-only" id="sidebarClose" aria-label="Cerrar menú">×</button>
+      </div>
+
+      <div class="sidebar-section-label">PREPARACIÓN</div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
+        <button class="nav-item" data-page="today"><span class="nav-icon">◎</span><span>Estudiar hoy</span></button>
+        <button class="nav-item" data-page="planner"><span class="nav-icon">◫</span><span>Study Planner</span></button>
+        <button class="nav-item" data-page="prebank"><span class="nav-icon">◈</span><span>Pre-Bank</span></button>
+        <button class="nav-item" data-page="ai"><span class="nav-icon">✦</span><span>BOARDS AI</span><span class="ai-nav-dot">AI</span></button>
+
+        <div class="sidebar-section-label inner-label">RENDIMIENTO</div>
+        <button class="nav-item" data-page="errors"><span class="nav-icon">⌁</span><span>Error Notebook</span><span class="nav-badge" id="sidebarErrorCount">0</span></button>
+        <button class="nav-item" data-page="performance"><span class="nav-icon">◔</span><span>Rendimiento</span></button>
+
+        <div class="sidebar-section-label inner-label">SISTEMA</div>
+        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>Configuración</span></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-progress">
+          <div class="sidebar-progress-top"><span id="sidebarProgressTitle">Cardiovascular</span><strong id="sidebarProgressLabel">0%</strong></div>
+          <div class="progress-track compact"><div class="progress-fill" id="sidebarProgressBar"></div></div>
+          <small class="sidebar-progress-hint" id="sidebarProgressHint">Progreso del plan actual</small>
+        </div>
+        <div class="version-chip">BOARDS Panamá · V0.5B.3</div>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="menu-button mobile-only" id="menuButton" aria-label="Abrir menú">☰</button>
+          <div><h1 id="pageTitle">Dashboard</h1><p id="pageSubtitle">Tu centro de preparación para IFOM / Step 2 CK</p></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="week-pill"><span>Bloque</span><strong id="topCurrentWeek">1 / 8</strong></div>
+          <button class="icon-button" id="themeToggle" aria-label="Cambiar modo de color">☾</button>
+          <button class="profile-chip" data-page-link="settings">
+            <span class="avatar" id="profileAvatar">BP</span>
+            <span class="profile-copy"><strong id="profileName">Estudiante</strong><small>BOARDS Prep</small></span>
+          </button>
+        </div>
+      </header>
+
+      <section class="page active" id="page-dashboard">
+        <div class="dashboard-hero">
+          <div class="hero-copy">
+            <div class="eyebrow">PLAN ACTUAL</div>
+            <h2 id="dashboardGreeting">Buenas noches</h2>
+            <p id="dashboardWeekDescription">Bloque 1 de 8 · Cardiovascular</p>
+            <div class="hero-schedule" id="dashboardScheduleInfo"></div>
+            <div class="plan-mode-badge"><span class="plan-mode-dot"></span><span id="dashboardPlanMode">Orden recomendado</span></div>
+            <div class="hero-actions">
+              <button class="button button-primary" data-page-link="today">Estudiar hoy</button>
+              <button class="button button-secondary" data-page-link="prebank">Abrir Pre-Bank</button>
+            </div>
+          </div>
+          <div class="hero-progress">
+            <div class="progress-ring" id="overallProgressRing"><div class="progress-ring-inner"><strong id="overallProgressValue">0%</strong><span>completado</span></div></div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card"><div class="stat-label">Preguntas realizadas</div><strong class="stat-value" id="statQuestions">0</strong><span class="stat-meta">Banco acumulado</span></article>
+          <article class="stat-card"><div class="stat-label">Precisión global</div><strong class="stat-value" id="statAccuracy">—</strong><span class="stat-meta">Correctas / realizadas</span></article>
+          <article class="stat-card"><div class="stat-label">Errores registrados</div><strong class="stat-value" id="statErrors">0</strong><span class="stat-meta">Notebook personal</span></article>
+          <article class="stat-card"><div class="stat-label">Racha de estudio</div><strong class="stat-value" id="statStreak">0</strong><span class="stat-meta">días consecutivos</span></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">HOY</span><h3 id="currentWeekPanelTitle">Objetivos del día</h3></div><div class="panel-header-actions"><span class="date-chip" id="currentWeekDateChip"></span><button class="text-button" data-page-link="today">Abrir sesión</button></div></div>
+            <div id="dashboardWeekTasks"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">PRIORIDAD</span><h3>Puntos a reforzar</h3></div><span class="status-dot danger"></span></div>
+            <div class="priority-list" id="priorityList"></div>
+          </article>
+          <article class="panel span-two">
+            <div class="panel-header"><div><span class="panel-kicker">PROGRESO</span><h3>Tu ruta por bloques curriculares</h3></div><button class="text-button" data-page-link="planner">Ver planner</button></div>
+            <div class="week-progress-list" id="dashboardWeeks"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-today">
+        <div class="section-heading"><div><span class="eyebrow">CENTRO OPERATIVO</span><h2>Estudiar hoy</h2><p id="todayDate"></p></div><div class="today-heading-actions" id="todayHeadingActions"></div></div>
+        <div id="todayPendingAlert" class="today-pending-container"></div>
+        <article class="daily-command-card" id="todayCommandCard"></article>
+        <div class="daily-metrics-grid" id="todayMetricsGrid"></div>
+
+        <article class="panel daily-progress-panel">
+          <div class="daily-progress-header"><div><span class="panel-kicker">PROGRESO DEL DÍA</span><h3>Sesión de estudio</h3></div><strong class="daily-progress-number" id="todayProgressValue">0%</strong></div>
+          <div class="daily-progress-track"><div class="daily-progress-fill" id="todayProgressBar"></div></div>
+          <div class="daily-task-list" id="todayTaskList"></div>
+        </article>
+
+        <div class="daily-layout">
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">PRE-BANK DEL DÍA</span><h3>Repaso dirigido</h3></div></div>
+            <div id="todayTopicAssignment"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">BANCO DE PREGUNTAS</span><h3 id="sessionFormTitle">Registrar bloque</h3></div><span class="session-form-mode" id="sessionFormMode"></span></div>
+            <div class="session-context-badge" id="sessionContextBadge"></div>
+            <div class="question-goal-box" id="todayQuestionGoal"></div>
+            <form id="sessionForm" class="form-stack">
+              <input id="sessionEditId" type="hidden" />
+              <label class="field"><span>Sistema</span><select id="sessionSystem"></select></label>
+              <div class="integrity-note" id="sessionSystemNote"></div>
+              <div class="form-row">
+                <label class="field"><span>Preguntas</span><input id="sessionQuestions" type="number" min="1" max="200" required placeholder="20" /></label>
+                <label class="field"><span>Correctas</span><input id="sessionCorrect" type="number" min="0" max="200" required placeholder="15" /></label>
+              </div>
+              <label class="field"><span>Nota opcional</span><textarea id="sessionNote" rows="3" placeholder="Ej. Bloque UWorld de arritmias..."></textarea></label>
+              <div class="form-button-row">
+                <button class="button button-primary form-submit-grow" id="sessionSubmitButton" type="submit">Registrar bloque</button>
+                <button class="button button-secondary" id="cancelSessionEdit" type="button" hidden>Cancelar edición</button>
+              </div>
+            </form>
+          </article>
+        </div>
+
+        <article class="panel session-history-panel">
+          <div class="panel-header"><div><span class="panel-kicker" id="sessionHistoryKicker">HOY</span><h3>Historial de bloques</h3></div></div>
+          <div class="session-history" id="todaySessionHistory"></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-planner">
+        <div class="section-heading"><div><span class="eyebrow">ADAPTIVE STUDY PLANNER</span><h2>Tu ruta se adapta al tiempo real disponible</h2><p>Los 8 bloques curriculares permanecen estables, pero el calendario puede durar semanas, meses o un año. BOARDS crea fases, revisitas y consolidación según tus fechas.</p></div></div>
+        <div class="planner-config-panel">
+          <div class="planner-config-copy"><span class="panel-kicker">ORDEN DE LA PRIMERA VUELTA</span><h3>Organiza los sistemas; BOARDS organiza el tiempo</h3><p>En planes largos, los sistemas reaparecen durante refuerzo adaptativo. El bloque de Consolidación permanece fijo para proteger la lógica del cierre.</p></div>
+          <div class="planner-mode-actions">
+            <div class="segmented-control"><button class="segment-button" data-study-mode="recommended">Recomendado</button><button class="segment-button" data-study-mode="custom">Personalizado</button></div>
+            <button class="button button-secondary reset-order-button" id="resetStudyOrder">Restaurar orden recomendado</button>
+          </div>
+        </div>
+        <div class="schedule-overview" id="scheduleOverview"></div>
+        <div class="planner-order-summary" id="plannerOrderSummary"></div>
+        <div class="planner-instruction" id="plannerInstruction"></div>
+        <div class="planner-grid" id="plannerWeeks"></div>
+      </section>
+
+      <section class="page" id="page-prebank">
+        <div class="section-heading with-control">
+          <div><span class="eyebrow">REPASO PRE-BANK</span><h2>Domina el tema antes de banquear</h2><p>Marca únicamente los temas que ya hayas repasado activamente.</p></div>
+          <label class="field compact-field"><span>Bloque de estudio</span><select id="prebankWeekSelect"></select></label>
+        </div>
+        <div class="prebank-summary" id="prebankSummary"></div>
+        <div class="topic-grid" id="prebankTopics"></div>
+      </section>
+
+      <!-- ====================================================
+           BOARDS AI · V0.5B.3
+           ==================================================== -->
+      <section class="page" id="page-ai">
+        <div class="section-heading ai-page-heading">
+          <div>
+            <span class="eyebrow">CLINICAL REVIEW ENGINE</span>
+            <h2>BOARDS AI</h2>
+            <p>Analiza una pregunta fallada y conviértela en aprendizaje reutilizable: razonamiento clínico, High-Yield, mini-quiz e Intelligent Flashcards.</p>
+          </div>
+          <div class="ai-phase-badge"><span>V0.5B.3</span><strong>IA CONECTADA</strong></div>
+        </div>
+
+        <div class="ai-live-notice">
+          <div class="ai-live-icon">✦</div>
+          <div>
+            <strong>Motor clínico conectado.</strong>
+            <span>La captura o el texto se envían al backend seguro de BOARDS para generar un análisis estructurado. La clave de OpenAI permanece exclusivamente en el servidor.</span>
+            <small>Privacidad: evita subir nombres, números de expediente u otros datos identificables de pacientes reales.</small>
+          </div>
+        </div>
+
+        <div class="ai-workspace-grid">
+          <article class="panel ai-input-panel">
+            <div class="panel-header"><div><span class="panel-kicker">NUEVA REVISIÓN</span><h3>Ingresa la pregunta fallada</h3></div></div>
+
+            <div class="segmented-control ai-mode-control">
+              <button class="segment-button active" type="button" data-ai-input-mode="image">📷 Captura / imagen</button>
+              <button class="segment-button" type="button" data-ai-input-mode="text">✎ Texto</button>
+            </div>
+
+            <div id="aiImageMode" class="ai-input-mode active">
+              <div class="ai-dropzone" id="aiDropzone" tabindex="0">
+                <input id="aiImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                <div class="ai-dropzone-empty" id="aiDropzoneEmpty">
+                  <div class="ai-upload-mark">↥</div>
+                  <strong>Arrastra tu captura aquí</strong>
+                  <span>PNG · JPG · WEBP</span>
+                  <button class="button button-secondary" id="aiChooseImageButton" type="button">Seleccionar imagen</button>
+                  <small>También puedes pegar una captura con ⌘ + V / Ctrl + V</small>
+                </div>
+                <div class="ai-image-preview" id="aiImagePreview" hidden>
+                  <img id="aiPreviewImage" alt="Vista previa de la pregunta" />
+                  <div class="ai-preview-footer"><div><strong id="aiPreviewName">captura.png</strong><span id="aiPreviewSize"></span></div><div class="ai-preview-actions"><button class="text-button" id="aiChangeImageButton" type="button">Cambiar</button><button class="ai-remove-file" id="aiRemoveImageButton" type="button" aria-label="Eliminar imagen">×</button></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div id="aiTextMode" class="ai-input-mode">
+              <label class="field"><span>Pega la vignette o pregunta</span><textarea id="aiQuestionText" class="ai-question-textarea" rows="12" placeholder="Paciente de 67 años...&#10;&#10;A. ...&#10;B. ...&#10;C. ...&#10;D. ...&#10;E. ..."></textarea></label>
+            </div>
+
+            <div class="ai-answer-grid">
+              <label class="field"><span>Tu respuesta</span><select id="aiUserAnswer"><option value="">No especificada</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option><option value="E">E</option></select></label>
+              <label class="field"><span>Respuesta correcta <em>opcional</em></span><select id="aiCorrectAnswer"><option value="">Detectar después</option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option><option value="E">E</option></select></label>
+            </div>
+
+            <button class="button button-primary ai-analyze-button" id="aiAnalyzeButton" type="button"><span>✦</span> Analizar con BOARDS AI</button>
+          </article>
+
+          <aside class="panel ai-context-panel">
+            <div class="panel-header"><div><span class="panel-kicker">CONTEXTO AUTOMÁTICO</span><h3>Jornada y bloque</h3></div></div>
+            <div id="aiContextSummary"></div>
+            <div class="ai-context-fields">
+              <label class="field"><span>Sistema</span><select id="aiSystemSelect"></select></label>
+              <label class="field"><span>Vincular a bloque <em>opcional</em></span><select id="aiBlockSelect"></select></label>
+            </div>
+            <div class="ai-context-note">BOARDS usa la misma regla de integridad de V0.4.1: el sistema disponible depende del módulo de la jornada.</div>
+          </aside>
+        </div>
+
+        <div class="ai-analysis-stage" id="aiAnalysisStage" hidden></div>
+        <div class="ai-result-root" id="aiResultRoot"></div>
+
+        <article class="panel ai-recent-panel">
+          <div class="panel-header"><div><span class="panel-kicker">ANÁLISIS RECIENTES</span><h3>Tu mesa de revisión</h3></div><span class="ai-recent-count" id="aiRecentCount">0</span></div>
+          <div id="aiRecentAnalyses"></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-errors">
+        <div class="section-heading with-control">
+          <div><span class="eyebrow">ERROR NOTEBOOK</span><h2>Convierte cada fallo en una regla clínica</h2><p>Registra el concepto fallado, el tipo de error y la regla que evitará repetirlo.</p></div>
+          <button class="button button-primary" id="openErrorModal">+ Registrar error</button>
+        </div>
+        <div class="filter-bar">
+          <label class="field compact-field"><span>Sistema</span><select id="errorSystemFilter"><option value="all">Todos</option></select></label>
+          <label class="field compact-field"><span>Tipo de error</span><select id="errorTypeFilter"><option value="all">Todos</option></select></label>
+        </div>
+        <div class="error-list" id="errorList"></div>
+      </section>
+
+      <section class="page" id="page-performance">
+        <div class="section-heading"><div><span class="eyebrow">ANALYTICS</span><h2>Reporte de rendimiento</h2><p>Tus sesiones y errores alimentan automáticamente este panel.</p></div></div>
+        <div class="stats-grid">
+          <article class="stat-card"><div class="stat-label">Preguntas</div><strong class="stat-value" id="perfQuestions">0</strong><span class="stat-meta">acumuladas</span></article>
+          <article class="stat-card"><div class="stat-label">Correctas</div><strong class="stat-value" id="perfCorrect">0</strong><span class="stat-meta">respuestas</span></article>
+          <article class="stat-card"><div class="stat-label">Precisión</div><strong class="stat-value" id="perfAccuracy">—</strong><span class="stat-meta">global</span></article>
+          <article class="stat-card"><div class="stat-label">Puntos ciegos</div><strong class="stat-value" id="perfBlindSpots">0</strong><span class="stat-meta">prioridades</span></article>
+        </div>
+        <div class="two-column-layout">
+          <article class="panel"><div class="panel-header"><div><span class="panel-kicker">POR SISTEMA</span><h3>Precisión del banco</h3></div></div><div class="performance-list" id="performanceSystemList"></div></article>
+          <article class="panel"><div class="panel-header"><div><span class="panel-kicker">PATRÓN DE ERROR</span><h3>Por qué estás fallando</h3></div></div><div class="performance-list" id="errorTypeAnalytics"></div></article>
+        </div>
+      </section>
+
+      <section class="page" id="page-settings">
+        <div class="section-heading"><div><span class="eyebrow">CONFIGURACIÓN</span><h2>Personaliza tu preparación</h2><p>Define tus fechas, días disponibles y meta diaria.</p></div></div>
+        <div class="two-column-layout">
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">PERFIL Y CALENDARIO</span><h3>Tu preparación</h3></div></div>
+            <form id="settingsForm" class="form-stack">
+              <label class="field"><span>Nombre</span><input id="settingsName" type="text" maxlength="60" placeholder="Tu nombre" /></label>
+              <label class="field"><span>Duración rápida</span><select id="settingsPlanPreset"><option value="custom">Personalizado</option><option value="8w">8 semanas</option><option value="12w">12 semanas</option><option value="6m">6 meses</option><option value="1y">1 año</option></select></label>
+              <div class="form-row">
+                <label class="field"><span>Fecha de inicio</span><input id="settingsStartDate" type="date" /></label>
+                <label class="field"><span>Fecha del examen</span><input id="settingsExamDate" type="date" /></label>
+              </div>
+              <label class="field"><span>Meta diaria de preguntas</span><input id="settingsDailyGoal" type="number" min="5" max="200" step="5" /></label>
+              <div class="field"><span>Días de estudio</span><div class="study-day-selector">
+                <label class="day-option"><input type="checkbox" value="mon" data-study-day /><span>L</span></label>
+                <label class="day-option"><input type="checkbox" value="tue" data-study-day /><span>M</span></label>
+                <label class="day-option"><input type="checkbox" value="wed" data-study-day /><span>X</span></label>
+                <label class="day-option"><input type="checkbox" value="thu" data-study-day /><span>J</span></label>
+                <label class="day-option"><input type="checkbox" value="fri" data-study-day /><span>V</span></label>
+                <label class="day-option"><input type="checkbox" value="sat" data-study-day /><span>S</span></label>
+                <label class="day-option"><input type="checkbox" value="sun" data-study-day /><span>D</span></label>
+              </div></div>
+              <div class="settings-plan-preview" id="settingsPlanPreview"><strong>Vista previa del plan</strong><span>Completa tus fechas para calcular la estrategia.</span></div>
+              <button class="button button-primary" type="submit">Recalcular plan futuro</button>
+              <div class="calendar-protection-note"><strong>Historial protegido</strong><span>Las jornadas pasadas y las jornadas con actividad registrada no cambian al modificar fechas, días u orden.</span></div>
+            </form>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header"><div><span class="panel-kicker">DATOS</span><h3>Respaldo local</h3></div></div>
+            <div class="settings-actions">
+              <button class="button button-secondary full-width" id="exportDataButton">Exportar progreso</button>
+              <label class="button button-secondary full-width file-button">Importar progreso<input id="importDataInput" type="file" accept="application/json" /></label>
+              <button class="button button-danger full-width" id="resetDataButton">Reiniciar todos los datos</button>
+            </div>
+            <div class="storage-note"><strong>BOARDS Panamá V0.5B.3</strong><p>El calendario adaptativo, jornadas protegidas, sesiones, errores y análisis permanecen almacenados localmente. Las preguntas se envían al backend seguro solo cuando pulsas “Analizar con BOARDS AI”; la captura original no se guarda en localStorage.</p></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal" id="errorModal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="errorModalTitle">
+      <div class="modal-header"><div><span class="panel-kicker">NUEVO ERROR</span><h2 id="errorModalTitle">Registrar pregunta fallada</h2></div><button class="modal-close" data-close-modal aria-label="Cerrar">×</button></div>
+      <form id="errorForm" class="form-stack">
+        <div class="form-row">
+          <label class="field"><span>Sistema</span><select id="errorSystem" required></select></label>
+          <label class="field"><span>Tipo de error</span><select id="errorType" required></select></label>
+        </div>
+        <label class="field"><span>Tema / diagnóstico</span><input id="errorTopic" type="text" required placeholder="Ej. Fibrilación auricular" /></label>
+        <label class="field"><span>Concepto evaluado</span><textarea id="errorConcept" rows="3" required placeholder="¿Qué estaba preguntando realmente la vignette?"></textarea></label>
+        <div class="form-row">
+          <label class="field"><span>Mi respuesta</span><input id="errorUserAnswer" type="text" /></label>
+          <label class="field"><span>Respuesta correcta</span><input id="errorCorrectAnswer" type="text" required /></label>
+        </div>
+        <label class="field"><span>Regla para no volver a fallarla</span><textarea id="errorRule" rows="3" required placeholder="Si veo X + Y → pienso primero en Z."></textarea></label>
+        <div class="modal-actions"><button class="button button-secondary" type="button" data-close-modal>Cancelar</button><button class="button button-primary" type="submit">Guardar error</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
