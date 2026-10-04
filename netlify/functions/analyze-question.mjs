@@ -1,6 +1,35 @@
 const OPENAI_URL = "https://api.openai.com/v1/responses";
 const MODEL = process.env.OPENAI_MODEL || "gpt-6-sol";
 
+const MODEL_PRICING_PER_MILLION = {
+  "gpt-6-sol": { input: 2.00, cachedInput: 0.20, output: 10.00, label: "Standard · short context" },
+  "gpt-6.1-sol": { input: 2.00, cachedInput: 0.10, output: 10.00, label: "Standard · short context" }
+};
+
+function estimateUsageCost(model, usage) {
+  const pricing = MODEL_PRICING_PER_MILLION[model];
+  if (!pricing || !usage) return null;
+  const inputTokens = Number(usage.input_tokens) || 0;
+  const cachedInputTokens = Number(usage.input_tokens_details?.cached_tokens) || 0;
+  const outputTokens = Number(usage.output_tokens) || 0;
+  const uncachedInputTokens = Math.max(inputTokens - cachedInputTokens, 0);
+  const estimatedCostUsd = (
+    uncachedInputTokens * pricing.input +
+    cachedInputTokens * pricing.cachedInput +
+    outputTokens * pricing.output
+  ) / 1_000_000;
+  return {
+    estimatedCostUsd,
+    pricing: {
+      inputPerMillionUsd: pricing.input,
+      cachedInputPerMillionUsd: pricing.cachedInput,
+      outputPerMillionUsd: pricing.output,
+      tierLabel: pricing.label,
+      pricingDate: "2026-10-04"
+    }
+  };
+}
+
 const ERROR_TYPES = [
   "Déficit de conocimiento",
   "Interpretación clínica",
@@ -37,6 +66,16 @@ const CLINICAL_SYSTEMS = [
   "No determinado"
 ];
 
+const POPULATION_CONTEXTS = [
+  "Adulto",
+  "Pediatría",
+  "Embarazo",
+  "Neonatal",
+  "Geriatría",
+  "No aplica / General",
+  "No determinado"
+];
+
 const ANALYSIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -70,6 +109,7 @@ const ANALYSIS_SCHEMA = {
       required: [
         "topic",
         "detected_system",
+        "population_context",
         "diagnosis_or_core_concept",
         "question_type",
         "answer_status",
@@ -90,6 +130,7 @@ const ANALYSIS_SCHEMA = {
       properties: {
         topic: { type: "string" },
         detected_system: { type: "string", enum: CLINICAL_SYSTEMS },
+        population_context: { type: "string", enum: POPULATION_CONTEXTS },
         diagnosis_or_core_concept: { type: "string" },
         question_type: { type: "string" },
         answer_status: {
@@ -238,12 +279,15 @@ REGLAS DE SEGURIDAD E INTEGRIDAD
 - Si la pregunta, las opciones o la imagen no son suficientemente legibles para un análisis confiable, usa status="needs_input", input_quality.sufficient=false, explica qué falta y NO realices un análisis clínico inventado.
 - Si una recomendación puede depender de una actualización posterior a tu conocimiento disponible o de una guía muy reciente, indícalo brevemente en clinical_caveat; no finjas haber consultado una guía en tiempo real.
 
-CLASIFICACIÓN CLÍNICA DEL SISTEMA
+CLASIFICACIÓN CLÍNICA EN DOS EJES
 - El sistema del plan o de la jornada recibido en el contexto es SOLO contexto organizativo. NO debes forzar la clasificación clínica para que coincida con él.
-- Determina detected_system exclusivamente a partir del contenido real de la pregunta.
-- Usa exactamente una de estas categorías: Cardiovascular; Respiratorio; Gastroenterología; Hematología; Neurología; Psiquiatría; Renal / Genitourinario; Ginecología; Obstetricia; Pediatría; Inmunología; Reumatología; Endocrinología; Dermatología; Bioestadística / Epidemiología; Ética / Salud Pública; Mixto / Integrado.
+- Determina detected_system exclusivamente a partir del objetivo clínico dominante de la pregunta.
+- Usa exactamente una de estas categorías para detected_system: Cardiovascular; Respiratorio; Gastroenterología; Hematología; Neurología; Psiquiatría; Renal / Genitourinario; Ginecología; Obstetricia; Pediatría; Inmunología; Reumatología; Endocrinología; Dermatología; Bioestadística / Epidemiología; Ética / Salud Pública; Mixto / Integrado.
 - Usa "Mixto / Integrado" solo cuando el objetivo del ítem sea genuinamente transversal y no exista un sistema dominante.
-- Si la entrada no es suficientemente legible para clasificarla, usa "No determinado".
+- Determina population_context por separado según la población o contexto fisiológico principal: Adulto; Pediatría; Embarazo; Neonatal; Geriatría; No aplica / General.
+- Un niño con neumonía, por ejemplo, puede tener detected_system="Respiratorio" y population_context="Pediatría".
+- Una gestante con una complicación hipertensiva puede tener detected_system="Obstetricia" y population_context="Embarazo".
+- Usa "No determinado" para cualquiera de los dos ejes si la entrada no es suficientemente legible para clasificarlo.
 
 RESPUESTAS DEL ESTUDIANTE
 - userAnswer provisto por la interfaz es autoritativo. Si está vacío, answer_status="not_provided"; no adivines qué eligió el estudiante.
@@ -266,37 +310,40 @@ ESTRUCTURA PEDAGÓGICA
    - key_findings: solo datos discriminantes del caso.
 
 2. detected_system:
-   Sistema clínico real de la pregunta, independiente del sistema de la jornada.
+   Sistema clínico real y dominante de la pregunta, independiente del sistema de la jornada.
 
-3. topic:
+3. population_context:
+   Población o contexto fisiológico principal: Adulto, Pediatría, Embarazo, Neonatal, Geriatría, No aplica / General o No determinado.
+
+4. topic:
    Tema clínico concreto y reutilizable.
 
-4. diagnosis_or_core_concept:
+5. diagnosis_or_core_concept:
    Diagnóstico más probable o concepto central. Si la pregunta no es diagnóstica, usa el concepto clínico apropiado.
 
-5. why_correct:
+6. why_correct:
    Explica por qué la respuesta correcta es correcta y cuál dato manda la decisión.
 
-6. user_reasoning_feedback:
+7. user_reasoning_feedback:
    - incorrect: por qué la opción del estudiante no es la mejor y qué razonamiento debía cambiar.
    - correct: por qué su elección es correcta y qué dato discriminante debió priorizar.
    - not_provided: explica la clave de razonamiento sin asumir una elección.
 
-7. distractor_or_trap:
+8. distractor_or_trap:
    Describe la trampa de examen o alternativa tentadora más importante.
 
-8. rule:
+9. rule:
    Una regla clínica corta para no repetir el error.
 
-9. management_map:
+10. management_map:
    3–8 pasos adaptados al problema. No fuerces "gold standard" si no aplica.
    Prioriza: sospecha → primer paso → confirmación si aplica → estabilidad/severidad → tratamiento → alternativa → seguimiento/complicaciones.
 
-10. high_yield:
+11. high_yield:
    Si status="ok", genera ENTRE 5 Y 8 perlas, directas, no redundantes y visualmente categorizables.
    Categorías sugeridas: PATRÓN, NBS, TRAMPA, DIAGNÓSTICO, TRATAMIENTO, FÁRMACO, CONTRAINDICACIÓN, COMPLICACIÓN, SEGUIMIENTO.
 
-11. mini_quiz:
+12. mini_quiz:
     Si status="ok", genera EXACTAMENTE 5 preguntas NUEVAS de integración.
     - No copies la vignette original.
     - Cada pregunta debe tener EXACTAMENTE 5 opciones.
@@ -304,7 +351,7 @@ ESTRUCTURA PEDAGÓGICA
     - correct_index es 0–4.
     - explanation explica la respuesta correcta y el dato discriminante.
 
-12. flashcards:
+13. flashcards:
     Genera 0–4 tarjetas SOLO si hay conceptos generalizables de alto rendimiento.
     Evita duplicados y hechos excesivamente específicos.
     front = pregunta breve.
@@ -554,6 +601,8 @@ export const handler = async (event) => {
       });
     }
 
+    const usageCost = estimateUsageCost(MODEL, apiJson?.usage);
+
     return jsonResponse(200, {
       status: parsed.status,
       inputQuality: parsed.input_quality,
@@ -564,7 +613,9 @@ export const handler = async (event) => {
         outputTokens: Number(apiJson.usage.output_tokens) || 0,
         totalTokens: Number(apiJson.usage.total_tokens) || 0,
         cachedInputTokens: Number(apiJson.usage.input_tokens_details?.cached_tokens) || 0,
-        reasoningTokens: Number(apiJson.usage.output_tokens_details?.reasoning_tokens) || 0
+        reasoningTokens: Number(apiJson.usage.output_tokens_details?.reasoning_tokens) || 0,
+        estimatedCostUsd: usageCost?.estimatedCostUsd ?? null,
+        pricing: usageCost?.pricing ?? null
       } : null,
       responseId: apiJson.id || null
     });

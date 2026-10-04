@@ -40,7 +40,7 @@
           <div class="progress-track compact"><div class="progress-fill" id="sidebarProgressBar"></div></div>
           <small class="sidebar-progress-hint" id="sidebarProgressHint">Progreso del plan actual</small>
         </div>
-        <div class="version-chip">BOARDS Panamá · V0.5B.4</div>
+        <div class="version-chip">BOARDS Panamá · V0.5B.5</div>
       </div>
     </aside>
 
@@ -173,7 +173,7 @@
       </section>
 
       <!-- ====================================================
-           BOARDS AI · V0.5B.4
+           BOARDS AI · V0.5B.5
            ==================================================== -->
       <section class="page" id="page-ai">
         <div class="section-heading ai-page-heading">
@@ -182,7 +182,7 @@
             <h2>BOARDS AI</h2>
             <p>Analiza una pregunta fallada y conviértela en aprendizaje reutilizable: razonamiento clínico, High-Yield, mini-quiz e Intelligent Flashcards.</p>
           </div>
-          <div class="ai-phase-badge"><span>V0.5B.4</span><strong>IA CONECTADA</strong></div>
+          <div class="ai-phase-badge"><span>V0.5B.5</span><strong>IA CONECTADA</strong></div>
         </div>
 
         <div class="ai-live-notice">
@@ -193,6 +193,8 @@
             <small>Privacidad: evita subir nombres, números de expediente u otros datos identificables de pacientes reales.</small>
           </div>
         </div>
+
+        <div class="ai-usage-meter" id="aiUsageMeter"></div>
 
         <div class="ai-workspace-grid">
           <article class="panel ai-input-panel">
@@ -258,7 +260,8 @@
           <button class="button button-primary" id="openErrorModal">+ Registrar error</button>
         </div>
         <div class="filter-bar">
-          <label class="field compact-field"><span>Sistema</span><select id="errorSystemFilter"><option value="all">Todos</option></select></label>
+          <label class="field compact-field"><span>Sistema clínico</span><select id="errorSystemFilter"><option value="all">Todos</option></select></label>
+          <label class="field compact-field"><span>Población / contexto</span><select id="errorPopulationFilter"><option value="all">Todos</option></select></label>
           <label class="field compact-field"><span>Tipo de error</span><select id="errorTypeFilter"><option value="all">Todos</option></select></label>
         </div>
         <div class="error-list" id="errorList"></div>
@@ -313,7 +316,7 @@
               <label class="button button-secondary full-width file-button">Importar progreso<input id="importDataInput" type="file" accept="application/json" /></label>
               <button class="button button-danger full-width" id="resetDataButton">Reiniciar todos los datos</button>
             </div>
-            <div class="storage-note"><strong>BOARDS Panamá V0.5B.4</strong><p>El calendario adaptativo, jornadas protegidas, sesiones, errores y análisis permanecen almacenados localmente. Las preguntas se envían al backend seguro solo cuando pulsas “Analizar con BOARDS AI”; la captura original no se guarda en localStorage.</p></div>
+            <div class="storage-note"><strong>BOARDS Panamá V0.5B.5</strong><p>El calendario adaptativo, jornadas protegidas, sesiones, errores y análisis permanecen almacenados localmente. Las preguntas se envían al backend seguro solo cuando pulsas “Analizar con BOARDS AI”; la captura original no se guarda en localStorage.</p></div>
           </article>
         </div>
       </section>
@@ -326,9 +329,10 @@
       <div class="modal-header"><div><span class="panel-kicker">NUEVO ERROR</span><h2 id="errorModalTitle">Registrar pregunta fallada</h2></div><button class="modal-close" data-close-modal aria-label="Cerrar">×</button></div>
       <form id="errorForm" class="form-stack">
         <div class="form-row">
-          <label class="field"><span>Sistema</span><select id="errorSystem" required></select></label>
-          <label class="field"><span>Tipo de error</span><select id="errorType" required></select></label>
+          <label class="field"><span>Sistema clínico</span><select id="errorSystem" required></select></label>
+          <label class="field"><span>Población / contexto</span><select id="errorPopulation" required></select></label>
         </div>
+        <label class="field"><span>Tipo de error</span><select id="errorType" required></select></label>
         <label class="field"><span>Tema / diagnóstico</span><input id="errorTopic" type="text" required placeholder="Ej. Fibrilación auricular" /></label>
         <label class="field"><span>Concepto evaluado</span><textarea id="errorConcept" rows="3" required placeholder="¿Qué estaba preguntando realmente la vignette?"></textarea></label>
         <div class="form-row">
