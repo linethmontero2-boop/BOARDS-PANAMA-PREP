@@ -64,7 +64,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.5B.3"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.5B.4"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -72,9 +72,16 @@ let state = loadState();
 let toastTimer = null, draggedModuleId = null, activeStudyDateKey = todayKey(), editingSessionId = null;
 let aiInputMode = "image", aiImageFile = null, aiImagePreviewUrl = "", aiContextDateKey = todayKey(), aiLinkedSessionId = "", aiSelectedSystem = "", aiCurrentAnalysis = null, aiQuizRuntime = null, aiBusy = false;
 
-function getDefaultState(){return {version:"0.5B.3",theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function getDefaultState(){return {version:"0.5B.4",theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function normalizeStoredAIAnalysis(a){
+  if(!a||typeof a!=="object")return a;
+  const legacySystem=a.system||"Mixto / Integrado";
+  const detectedSystem=a.detectedSystem||legacySystem;
+  const planSystem=a.planSystem||legacySystem;
+  return {...a,detectedSystem,planSystem,system:detectedSystem};
+}
 function loadState(){const f=getDefaultState();try{const s=localStorage.getItem(STORAGE_KEY);return s?normalizeState(JSON.parse(s)):f}catch(e){console.error(e);return f}}
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];return {...f,...raw,version:"0.5B.3",currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors:Array.isArray(raw.errors)?raw.errors:[],aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses:[],scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3"].includes(String(raw.version||""))};}
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];return {...f,...raw,version:"0.5B.4",currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors:Array.isArray(raw.errors)?raw.errors:[],aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4"].includes(String(raw.version||""))};}
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
 function saveState(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}catch(e){console.error(e)}}
 function escapeHTML(v=""){return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
@@ -311,6 +318,7 @@ async function runAIAnalysis(){
         localDate:ctx.localDate,
         moduleId:ctx.moduleId,
         moduleTitle:getModule(ctx.moduleId).title,
+        planSystem:aiSelectedSystem,
         system:aiSelectedSystem,
         block:linked?{
           id:linked.id,
@@ -437,6 +445,15 @@ function normalizeAIAnalysis(payload,ctx,linked){
     correct:clamp(Number(question.correct_index)||0,0,4),
     explanation:question.explanation||""
   })):[];
+  const planSystem=aiSelectedSystem||getAllowedSystemsForModule(ctx.moduleId)[0]||"Mixto / Integrado";
+  const detectedSystem=String(raw.detected_system||"").trim()||planSystem;
+  const usage=payload.usage&&typeof payload.usage==="object"?{
+    inputTokens:Number(payload.usage.inputTokens)||0,
+    outputTokens:Number(payload.usage.outputTokens)||0,
+    totalTokens:Number(payload.usage.totalTokens)||0,
+    cachedInputTokens:Number(payload.usage.cachedInputTokens)||0,
+    reasoningTokens:Number(payload.usage.reasoningTokens)||0
+  }:null;
   return {
     id:createId("analysis"),
     isDemo:false,
@@ -444,7 +461,10 @@ function normalizeAIAnalysis(payload,ctx,linked){
     createdAt:new Date().toISOString(),
     localDate:ctx.localDate,
     moduleId:ctx.moduleId,
-    system:aiSelectedSystem||getAllowedSystemsForModule(ctx.moduleId)[0]||"Mixto / Integrado",
+    planSystem,
+    detectedSystem,
+    system:detectedSystem,
+    usage,
     blockId:linked?.id||null,
     sourceType:aiInputMode,
     answerStatus,
@@ -478,7 +498,7 @@ function normalizeAIAnalysis(payload,ctx,linked){
     saved:false
   }
 }
-function createMockAnalysis(){const ctx=getAIContext(),userLetter=document.getElementById("aiUserAnswer").value||"B",linked=state.bankSessions.find(s=>s.id===aiLinkedSessionId);return {id:createId("analysis"),isDemo:true,createdAt:new Date().toISOString(),localDate:ctx.localDate,moduleId:ctx.moduleId,system:aiSelectedSystem||"Cardiovascular",blockId:linked?.id||null,sourceType:aiInputMode,userAnswer:`${userLetter} · Metoprolol IV`,correctAnswer:"D · Cardioversión eléctrica sincronizada",topic:"Fibrilación auricular",diagnosis:"Fibrilación auricular con inestabilidad hemodinámica",questionType:"Next Best Step",errorType:"Error de Next Best Step",snapshot:{patient:"67 años",context:"Taquiarritmia",stability:"Inestable",question:"Next Best Step in Management",clues:["Palpitaciones de inicio súbito","TA 78/46 mmHg","Alteración del estado mental","ECG compatible con fibrilación auricular"]},correctReason:"La hipotensión y la alteración del estado mental indican inestabilidad hemodinámica. Una taquiarritmia inestable con pulso requiere cardioversión eléctrica sincronizada inmediata.",incorrectReason:"Los fármacos para control de frecuencia pueden ser apropiados en pacientes estables, pero retrasan la intervención indicada cuando la arritmia está causando inestabilidad hemodinámica.",distractor:"Reconocer la fibrilación auricular pero no priorizar la estabilidad hemodinámica antes del control farmacológico.",rule:"Taquiarritmia + pulso + inestabilidad hemodinámica → cardioversión eléctrica sincronizada.",managementMap:[{label:"SOSPECHA",text:"Taquiarritmia + síntomas"},{label:"PRIMER FILTRO",text:"¿Hay inestabilidad hemodinámica?"},{label:"SI ESTÁ INESTABLE",text:"Cardioversión sincronizada"},{label:"DESPUÉS",text:"Estabilizar y buscar precipitantes"},{label:"SEGUIMIENTO",text:"Evaluar estrategia de anticoagulación"}],highYield:[{category:"NBS",text:"Taquiarritmia con pulso e inestabilidad hemodinámica → cardioversión sincronizada inmediata."},{category:"PATRÓN",text:"Hipotensión, isquemia, edema pulmonar o alteración mental sugieren inestabilidad atribuible a la arritmia."},{category:"TRAMPA",text:"No priorices control de frecuencia farmacológico si el paciente está inestable."},{category:"PROCEDIMIENTO",text:"La cardioversión sincroniza la descarga con el QRS para reducir el riesgo de inducir fibrilación ventricular."},{category:"DIFERENCIAL",text:"Taquicardia sin pulso o fibrilación ventricular requieren desfibrilación, no cardioversión sincronizada."},{category:"SEGUIMIENTO",text:"Tras estabilizar, reevalúa riesgo tromboembólico, duración de la arritmia y necesidad de anticoagulación."}],quiz:{questions:getMockQuizQuestions(),score:null},flashcards:[{front:"Taquiarritmia con pulso + hipotensión o alteración del estado mental: ¿manejo inmediato?",back:"Cardioversión eléctrica sincronizada.\n\nClave BOARDS: la inestabilidad hemodinámica determina el manejo inmediato."},{front:"¿Qué hallazgos convierten una taquiarritmia en clínicamente inestable?",back:"Hipotensión, signos de shock, isquemia miocárdica, edema pulmonar/insuficiencia cardíaca aguda o alteración del estado mental atribuible a la arritmia."}],saved:false};}
+function createMockAnalysis(){const ctx=getAIContext(),userLetter=document.getElementById("aiUserAnswer").value||"B",linked=state.bankSessions.find(s=>s.id===aiLinkedSessionId);return {id:createId("analysis"),isDemo:true,createdAt:new Date().toISOString(),localDate:ctx.localDate,moduleId:ctx.moduleId,planSystem:aiSelectedSystem||"Cardiovascular",detectedSystem:aiSelectedSystem||"Cardiovascular",system:aiSelectedSystem||"Cardiovascular",usage:null,blockId:linked?.id||null,sourceType:aiInputMode,userAnswer:`${userLetter} · Metoprolol IV`,correctAnswer:"D · Cardioversión eléctrica sincronizada",topic:"Fibrilación auricular",diagnosis:"Fibrilación auricular con inestabilidad hemodinámica",questionType:"Next Best Step",errorType:"Error de Next Best Step",snapshot:{patient:"67 años",context:"Taquiarritmia",stability:"Inestable",question:"Next Best Step in Management",clues:["Palpitaciones de inicio súbito","TA 78/46 mmHg","Alteración del estado mental","ECG compatible con fibrilación auricular"]},correctReason:"La hipotensión y la alteración del estado mental indican inestabilidad hemodinámica. Una taquiarritmia inestable con pulso requiere cardioversión eléctrica sincronizada inmediata.",incorrectReason:"Los fármacos para control de frecuencia pueden ser apropiados en pacientes estables, pero retrasan la intervención indicada cuando la arritmia está causando inestabilidad hemodinámica.",distractor:"Reconocer la fibrilación auricular pero no priorizar la estabilidad hemodinámica antes del control farmacológico.",rule:"Taquiarritmia + pulso + inestabilidad hemodinámica → cardioversión eléctrica sincronizada.",managementMap:[{label:"SOSPECHA",text:"Taquiarritmia + síntomas"},{label:"PRIMER FILTRO",text:"¿Hay inestabilidad hemodinámica?"},{label:"SI ESTÁ INESTABLE",text:"Cardioversión sincronizada"},{label:"DESPUÉS",text:"Estabilizar y buscar precipitantes"},{label:"SEGUIMIENTO",text:"Evaluar estrategia de anticoagulación"}],highYield:[{category:"NBS",text:"Taquiarritmia con pulso e inestabilidad hemodinámica → cardioversión sincronizada inmediata."},{category:"PATRÓN",text:"Hipotensión, isquemia, edema pulmonar o alteración mental sugieren inestabilidad atribuible a la arritmia."},{category:"TRAMPA",text:"No priorices control de frecuencia farmacológico si el paciente está inestable."},{category:"PROCEDIMIENTO",text:"La cardioversión sincroniza la descarga con el QRS para reducir el riesgo de inducir fibrilación ventricular."},{category:"DIFERENCIAL",text:"Taquicardia sin pulso o fibrilación ventricular requieren desfibrilación, no cardioversión sincronizada."},{category:"SEGUIMIENTO",text:"Tras estabilizar, reevalúa riesgo tromboembólico, duración de la arritmia y necesidad de anticoagulación."}],quiz:{questions:getMockQuizQuestions(),score:null},flashcards:[{front:"Taquiarritmia con pulso + hipotensión o alteración del estado mental: ¿manejo inmediato?",back:"Cardioversión eléctrica sincronizada.\n\nClave BOARDS: la inestabilidad hemodinámica determina el manejo inmediato."},{front:"¿Qué hallazgos convierten una taquiarritmia en clínicamente inestable?",back:"Hipotensión, signos de shock, isquemia miocárdica, edema pulmonar/insuficiencia cardíaca aguda o alteración del estado mental atribuible a la arritmia."}],saved:false};}
 function getMockQuizQuestions(){return [
   {domain:"Next Best Step",stem:"Un hombre de 68 años con fibrilación auricular presenta presión arterial de 76/44 mmHg, diaforesis y confusión. Tiene pulso. ¿Cuál es el siguiente paso más apropiado?",options:["A. Metoprolol IV","B. Adenosina IV","C. Digoxina IV","D. Cardioversión eléctrica sincronizada","E. Observación"],correct:3,explanation:"La arritmia está asociada a inestabilidad hemodinámica. Con pulso, la intervención inmediata es cardioversión sincronizada."},
   {domain:"Reconocimiento",stem:"¿Cuál de los siguientes hallazgos es el dato más importante para decidir entre control farmacológico inicial y cardioversión inmediata en una taquiarritmia con pulso?",options:["A. Edad mayor de 65 años","B. Duración de las palpitaciones","C. Inestabilidad hemodinámica","D. Frecuencia exacta de 130/min","E. Antecedente de hipertensión"],correct:2,explanation:"La estabilidad hemodinámica es el determinante inmediato del algoritmo de manejo de una taquiarritmia con pulso."},
@@ -496,8 +516,12 @@ function renderAIResult(){
   const statusLabel=a.isDemo?"✓ ANÁLISIS DEMO":"✓ ANÁLISIS IA COMPLETADO";
   const answerStatus=a.answerStatus||"incorrect";
   const saveButtonLabel=answerStatus==="incorrect"?"Guardar en Error Notebook":"Guardar análisis";
+  const detectedSystem=a.detectedSystem||a.system||"No determinado";
+  const planSystem=a.planSystem||a.system||"No determinado";
+  const differs=detectedSystem!==planSystem;
+  const usageText=a.usage?.totalTokens?`${Number(a.usage.totalTokens).toLocaleString("es-PA")} tokens` : "";
   root.innerHTML=`
-  <div class="ai-result-hero"><div class="ai-result-topline"><div><span class="ai-result-status">${statusLabel}</span><h3>${escapeHTML(a.diagnosis)}</h3><p>${a.isDemo?"Análisis heredado de la fase de interfaz.":"Análisis generado a partir de la captura o texto proporcionado."}</p></div><span class="ai-model-tag">${escapeHTML(modelLabel)}</span></div><div class="ai-result-tags"><span class="ai-result-tag">${escapeHTML(a.system)}</span><span class="ai-result-tag">${escapeHTML(a.topic)}</span><span class="ai-result-tag">${escapeHTML(a.questionType)}</span><span class="ai-result-tag">${formatShortDate(parseLocalDate(a.localDate))}</span></div></div>
+  <div class="ai-result-hero"><div class="ai-result-topline"><div><span class="ai-result-status">${statusLabel}</span><h3>${escapeHTML(a.diagnosis)}</h3><p>${a.isDemo?"Análisis heredado de la fase de interfaz.":"Análisis generado a partir de la captura o texto proporcionado."}</p></div><div class="ai-result-engine"><span class="ai-model-tag">${escapeHTML(modelLabel)}</span>${usageText?`<small>${escapeHTML(usageText)}</small>`:""}</div></div><div class="ai-result-tags"><span class="ai-result-tag detected">Clínico · ${escapeHTML(detectedSystem)}</span>${differs?`<span class="ai-result-tag plan">Plan · ${escapeHTML(planSystem)}</span>`:""}<span class="ai-result-tag">${escapeHTML(a.topic)}</span><span class="ai-result-tag">${escapeHTML(a.questionType)}</span><span class="ai-result-tag">${formatShortDate(parseLocalDate(a.localDate))}</span></div></div>
   ${renderSnapshotSection(a)}${renderAnswerSection(a)}${renderReasoningSection(a)}${renderManagementSection(a)}${renderHighYieldSection(a)}
   ${a.clinicalCaveat?`<div class="clinical-caveat"><span>NOTA DE ACTUALIZACIÓN</span><p>${escapeHTML(a.clinicalCaveat)}</p></div>`:""}
   <section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">RECALL ACTIVO</span><h3>6. Mini-Quiz · 5 preguntas</h3></div><div class="ai-section-index">06</div></div><div id="aiQuizMount"></div></section>
@@ -506,7 +530,7 @@ function renderAIResult(){
   bindAIResultEvents();
   renderAIQuiz()
 }
-function renderSnapshotSection(a){return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">LECTURA CLÍNICA</span><h3>1. Clinical Snapshot</h3></div><div class="ai-section-index">01</div></div><div class="snapshot-grid"><div class="snapshot-chip"><span>PACIENTE</span><strong>${escapeHTML(a.snapshot.patient)}</strong></div><div class="snapshot-chip"><span>SISTEMA</span><strong>${escapeHTML(a.system)}</strong></div><div class="snapshot-chip"><span>ESTABILIDAD</span><strong>${escapeHTML(a.snapshot.stability)}</strong></div><div class="snapshot-chip"><span>PREGUNTA</span><strong>${escapeHTML(a.snapshot.question)}</strong></div></div><div class="snapshot-clues">${a.snapshot.clues.map(x=>`<div class="snapshot-clue"><b>•</b><span>${escapeHTML(x)}</span></div>`).join("")}</div><div class="snapshot-diagnosis"><span>DIAGNÓSTICO CLÍNICO</span><strong>${escapeHTML(a.diagnosis)}</strong></div></section>`}
+function renderSnapshotSection(a){const detected=a.detectedSystem||a.system||"No determinado",plan=a.planSystem||a.system||"No determinado",differs=detected!==plan;return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">LECTURA CLÍNICA</span><h3>1. Clinical Snapshot</h3></div><div class="ai-section-index">01</div></div><div class="snapshot-grid"><div class="snapshot-chip"><span>PACIENTE</span><strong>${escapeHTML(a.snapshot.patient)}</strong></div><div class="snapshot-chip"><span>SISTEMA CLÍNICO</span><strong>${escapeHTML(detected)}</strong></div><div class="snapshot-chip"><span>ESTABILIDAD</span><strong>${escapeHTML(a.snapshot.stability)}</strong></div><div class="snapshot-chip"><span>PREGUNTA</span><strong>${escapeHTML(a.snapshot.question)}</strong></div></div>${differs?`<div class="snapshot-context-note"><span>CONTEXTO DEL PLAN</span><strong>${escapeHTML(plan)}</strong><p>La pregunta fue clasificada clínicamente como ${escapeHTML(detected)}; se conserva ${escapeHTML(plan)} únicamente como contexto de la jornada.</p></div>`:""}<div class="snapshot-clues">${a.snapshot.clues.map(x=>`<div class="snapshot-clue"><b>•</b><span>${escapeHTML(x)}</span></div>`).join("")}</div><div class="snapshot-diagnosis"><span>DIAGNÓSTICO CLÍNICO</span><strong>${escapeHTML(a.diagnosis)}</strong></div></section>`}
 function renderAnswerSection(a){
   const status=a.answerStatus||"incorrect";
   const userClass=status==="correct"?"correct":status==="not_provided"?"neutral":"wrong";
@@ -522,7 +546,7 @@ function renderReasoningSection(a){
   const typeLabel=status==="incorrect"?`${escapeHTML(a.errorType)} · Alta relevancia BOARDS`:"Revisión de razonamiento · aprendizaje consolidado";
   return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">RAZONAMIENTO</span><h3>${title}</h3></div><div class="ai-section-index">03</div></div><div class="reason-grid"><div class="reason-card"><span>POR QUÉ LA CORRECTA ES CORRECTA</span><p>${escapeHTML(a.correctReason)}</p></div><div class="reason-card"><span>${userLabel}</span><p>${escapeHTML(a.incorrectReason)}</p></div><div class="reason-card full"><span>${trapLabel}</span><p>${escapeHTML(a.distractor)}</p></div></div><div class="error-type-card"><span>${status==="incorrect"?"TIPO DE ERROR":"CLASIFICACIÓN"}</span><strong>${typeLabel}</strong></div></section>`
 }
-function renderManagementSection(a){return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">ALGORITMO</span><h3>4. Mapa diagnóstico-terapéutico</h3></div><div class="ai-section-index">04</div></div><div class="management-flow">${a.managementMap.map((n,i)=>`${i?'<div class="management-arrow">→</div>':""}<div class="management-node"><span>${escapeHTML(n.label)}</span><strong>${escapeHTML(n.text)}</strong></div>`).join("")}</div></section>`}
+function renderManagementSection(a){return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">ALGORITMO</span><h3>4. Mapa diagnóstico-terapéutico</h3></div><div class="ai-section-index">04</div></div><div class="management-flow">${a.managementMap.map((n,i)=>`<div class="management-node"><span class="management-step-number">${String(i+1).padStart(2,"0")}</span><span class="management-label">${escapeHTML(n.label)}</span><strong>${escapeHTML(n.text)}</strong></div>`).join("")}</div></section>`}
 function renderHighYieldSection(a){return `<section class="ai-section"><div class="ai-section-header"><div><span class="panel-kicker">MEMORIA DE EXAMEN</span><h3>5. High-Yield</h3></div><div class="ai-section-index">05</div></div><div class="highyield-grid">${a.highYield.slice(0,8).map((x,i)=>`<article class="highyield-card"><span class="highyield-number">${String(i+1).padStart(2,"0")}</span><span class="highyield-category">${escapeHTML(x.category)}</span><p>${escapeHTML(x.text)}</p></article>`).join("")}</div></section>`}
 function renderFlashcardsSection(a){
   const cards=Array.isArray(a.flashcards)?a.flashcards:[];
@@ -552,7 +576,7 @@ function saveCurrentAIAnalysis(){
   if((saved.answerStatus||"incorrect")==="incorrect"){
     state.errors.unshift({
       id:createId("error"),
-      system:saved.system,
+      system:saved.detectedSystem||saved.system,
       type:saved.errorType,
       topic:saved.topic,
       concept:saved.diagnosis,
@@ -569,7 +593,7 @@ function saveCurrentAIAnalysis(){
   renderAll();
   showToast((saved.answerStatus||"incorrect")==="incorrect"?"Análisis guardado en Error Notebook.":"Análisis correcto guardado en tu historial.")
 }
-function openSavedAnalysis(id){const a=state.aiAnalyses.find(x=>x.id===id);if(!a){showToast("No se encontró el análisis.");return}aiCurrentAnalysis={...a,saved:true};aiContextDateKey=a.localDate||todayKey();aiLinkedSessionId=a.blockId||"";aiSelectedSystem=a.system||"";initializeQuizRuntime(aiCurrentAnalysis);navigateTo("ai");requestAnimationFrame(()=>document.getElementById("aiResultRoot")?.scrollIntoView({behavior:"smooth",block:"start"}))}
+function openSavedAnalysis(id){const a=state.aiAnalyses.find(x=>x.id===id);if(!a){showToast("No se encontró el análisis.");return}aiCurrentAnalysis={...a,saved:true};aiContextDateKey=a.localDate||todayKey();aiLinkedSessionId=a.blockId||"";aiSelectedSystem=a.planSystem||a.system||"";initializeQuizRuntime(aiCurrentAnalysis);navigateTo("ai");requestAnimationFrame(()=>document.getElementById("aiResultRoot")?.scrollIntoView({behavior:"smooth",block:"start"}))}
 function renderAIRecent(){
   const c=document.getElementById("aiRecentAnalyses"),count=document.getElementById("aiRecentCount");
   if(!c||!count)return;
@@ -578,7 +602,7 @@ function renderAIRecent(){
     c.innerHTML='<div class="ai-empty-recent">Todavía no hay análisis guardados. Analiza una captura o una vignette para comenzar tu historial clínico.</div>';
     return
   }
-  c.innerHTML=`<div class="ai-recent-list">${state.aiAnalyses.slice(0,6).map(a=>`<div class="ai-recent-item"><div class="ai-recent-copy"><strong>${escapeHTML(a.diagnosis||a.topic)}</strong><span>${escapeHTML(a.system)} · ${escapeHTML(a.errorType||a.questionType)} · ${formatShortDate(parseLocalDate(a.localDate))}</span></div><div class="ai-recent-actions"><button class="button button-secondary" data-open-recent-analysis="${a.id}">Abrir</button></div></div>`).join("")}</div>`;
+  c.innerHTML=`<div class="ai-recent-list">${state.aiAnalyses.slice(0,6).map(a=>`<div class="ai-recent-item"><div class="ai-recent-copy"><strong>${escapeHTML(a.diagnosis||a.topic)}</strong><span>${escapeHTML(a.detectedSystem||a.system)} · ${escapeHTML(a.errorType||a.questionType)} · ${formatShortDate(parseLocalDate(a.localDate))}</span></div><div class="ai-recent-actions"><button class="button button-secondary" data-open-recent-analysis="${a.id}">Abrir</button></div></div>`).join("")}</div>`;
   c.querySelectorAll("[data-open-recent-analysis]").forEach(b=>b.addEventListener("click",()=>openSavedAnalysis(b.dataset.openRecentAnalysis)))
 }
 function renderAIQuiz(){
@@ -630,3 +654,4 @@ function renderAIQuiz(){
     renderAIQuiz()
   })
 }
+

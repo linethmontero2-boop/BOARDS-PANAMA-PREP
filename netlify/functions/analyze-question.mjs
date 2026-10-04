@@ -14,6 +14,27 @@ const ERROR_TYPES = [
   "Falta de reconocimiento de patrón",
   "Revisión de razonamiento",
   "No clasificable"
+ ];
+
+const CLINICAL_SYSTEMS = [
+  "Cardiovascular",
+  "Respiratorio",
+  "Gastroenterología",
+  "Hematología",
+  "Neurología",
+  "Psiquiatría",
+  "Renal / Genitourinario",
+  "Ginecología",
+  "Obstetricia",
+  "Pediatría",
+  "Inmunología",
+  "Reumatología",
+  "Endocrinología",
+  "Dermatología",
+  "Bioestadística / Epidemiología",
+  "Ética / Salud Pública",
+  "Mixto / Integrado",
+  "No determinado"
 ];
 
 const ANALYSIS_SCHEMA = {
@@ -48,6 +69,7 @@ const ANALYSIS_SCHEMA = {
       additionalProperties: false,
       required: [
         "topic",
+        "detected_system",
         "diagnosis_or_core_concept",
         "question_type",
         "answer_status",
@@ -67,6 +89,7 @@ const ANALYSIS_SCHEMA = {
       ],
       properties: {
         topic: { type: "string" },
+        detected_system: { type: "string", enum: CLINICAL_SYSTEMS },
         diagnosis_or_core_concept: { type: "string" },
         question_type: { type: "string" },
         answer_status: {
@@ -215,6 +238,13 @@ REGLAS DE SEGURIDAD E INTEGRIDAD
 - Si la pregunta, las opciones o la imagen no son suficientemente legibles para un análisis confiable, usa status="needs_input", input_quality.sufficient=false, explica qué falta y NO realices un análisis clínico inventado.
 - Si una recomendación puede depender de una actualización posterior a tu conocimiento disponible o de una guía muy reciente, indícalo brevemente en clinical_caveat; no finjas haber consultado una guía en tiempo real.
 
+CLASIFICACIÓN CLÍNICA DEL SISTEMA
+- El sistema del plan o de la jornada recibido en el contexto es SOLO contexto organizativo. NO debes forzar la clasificación clínica para que coincida con él.
+- Determina detected_system exclusivamente a partir del contenido real de la pregunta.
+- Usa exactamente una de estas categorías: Cardiovascular; Respiratorio; Gastroenterología; Hematología; Neurología; Psiquiatría; Renal / Genitourinario; Ginecología; Obstetricia; Pediatría; Inmunología; Reumatología; Endocrinología; Dermatología; Bioestadística / Epidemiología; Ética / Salud Pública; Mixto / Integrado.
+- Usa "Mixto / Integrado" solo cuando el objetivo del ítem sea genuinamente transversal y no exista un sistema dominante.
+- Si la entrada no es suficientemente legible para clasificarla, usa "No determinado".
+
 RESPUESTAS DEL ESTUDIANTE
 - userAnswer provisto por la interfaz es autoritativo. Si está vacío, answer_status="not_provided"; no adivines qué eligió el estudiante.
 - correctAnswer provisto por la interfaz representa la respuesta correcta indicada por la fuente. Debes respetarlo si la opción existe y es interpretable.
@@ -235,35 +265,38 @@ ESTRUCTURA PEDAGÓGICA
    - question: qué está preguntando realmente el ítem.
    - key_findings: solo datos discriminantes del caso.
 
-2. topic:
+2. detected_system:
+   Sistema clínico real de la pregunta, independiente del sistema de la jornada.
+
+3. topic:
    Tema clínico concreto y reutilizable.
 
-3. diagnosis_or_core_concept:
+4. diagnosis_or_core_concept:
    Diagnóstico más probable o concepto central. Si la pregunta no es diagnóstica, usa el concepto clínico apropiado.
 
-4. why_correct:
+5. why_correct:
    Explica por qué la respuesta correcta es correcta y cuál dato manda la decisión.
 
-5. user_reasoning_feedback:
+6. user_reasoning_feedback:
    - incorrect: por qué la opción del estudiante no es la mejor y qué razonamiento debía cambiar.
    - correct: por qué su elección es correcta y qué dato discriminante debió priorizar.
    - not_provided: explica la clave de razonamiento sin asumir una elección.
 
-6. distractor_or_trap:
+7. distractor_or_trap:
    Describe la trampa de examen o alternativa tentadora más importante.
 
-7. rule:
+8. rule:
    Una regla clínica corta para no repetir el error.
 
-8. management_map:
+9. management_map:
    3–8 pasos adaptados al problema. No fuerces "gold standard" si no aplica.
    Prioriza: sospecha → primer paso → confirmación si aplica → estabilidad/severidad → tratamiento → alternativa → seguimiento/complicaciones.
 
-9. high_yield:
+10. high_yield:
    Si status="ok", genera ENTRE 5 Y 8 perlas, directas, no redundantes y visualmente categorizables.
    Categorías sugeridas: PATRÓN, NBS, TRAMPA, DIAGNÓSTICO, TRATAMIENTO, FÁRMACO, CONTRAINDICACIÓN, COMPLICACIÓN, SEGUIMIENTO.
 
-10. mini_quiz:
+11. mini_quiz:
     Si status="ok", genera EXACTAMENTE 5 preguntas NUEVAS de integración.
     - No copies la vignette original.
     - Cada pregunta debe tener EXACTAMENTE 5 opciones.
@@ -271,7 +304,7 @@ ESTRUCTURA PEDAGÓGICA
     - correct_index es 0–4.
     - explanation explica la respuesta correcta y el dato discriminante.
 
-11. flashcards:
+12. flashcards:
     Genera 0–4 tarjetas SOLO si hay conceptos generalizables de alto rendimiento.
     Evita duplicados y hechos excesivamente específicos.
     front = pregunta breve.
@@ -313,7 +346,7 @@ function buildUserContext(body) {
     `Modo de entrada: ${body.mode}.`,
     `Fecha de estudio: ${context.localDate || "no especificada"}.`,
     `Módulo del plan: ${context.moduleTitle || "no especificado"}.`,
-    `Sistema permitido por el plan: ${context.system || "no especificado"}.`,
+    `Sistema de la jornada (solo contexto organizativo, no clasificación clínica): ${context.planSystem || context.system || "no especificado"}.`,
     `Respuesta elegida por el estudiante: ${body.userAnswer || "NO ESPECIFICADA"}.`,
     `Respuesta correcta indicada por el estudiante/fuente: ${body.correctAnswer || "NO PROPORCIONADA"}.`,
     block
@@ -526,6 +559,13 @@ export const handler = async (event) => {
       inputQuality: parsed.input_quality,
       analysis: parsed.analysis,
       model: MODEL,
+      usage: apiJson?.usage ? {
+        inputTokens: Number(apiJson.usage.input_tokens) || 0,
+        outputTokens: Number(apiJson.usage.output_tokens) || 0,
+        totalTokens: Number(apiJson.usage.total_tokens) || 0,
+        cachedInputTokens: Number(apiJson.usage.input_tokens_details?.cached_tokens) || 0,
+        reasoningTokens: Number(apiJson.usage.output_tokens_details?.reasoning_tokens) || 0
+      } : null,
       responseId: apiJson.id || null
     });
   } catch (error) {
