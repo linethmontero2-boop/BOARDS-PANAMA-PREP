@@ -1,8 +1,21 @@
 import "./style.css";
+import { createClient } from "@supabase/supabase-js";
 
 document.addEventListener("DOMContentLoaded", initApp);
 
 const STORAGE_KEY = "boardsPanamaPrep.v01";
+const LEGACY_STORAGE_CLAIM_KEY = `${STORAGE_KEY}.legacyClaimedBy`;
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
+const SUPABASE_PUBLISHABLE_KEY = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "").trim();
+const supabase = SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    })
+  : null;
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
 const SYSTEMS = ["Cardiovascular","Respiratorio","Gastroenterología","Hematología","Neurología","Psiquiatría","Renal / Genitourinario","Ginecología","Obstetricia","Pediatría","Inmunología","Reumatología","Endocrinología","Dermatología","Bioestadística / Epidemiología","Ética / Salud Pública"];
@@ -69,15 +82,23 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.5B.5"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6A"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
-let state = loadState();
+let authSession = null;
+let authUser = null;
+let authMode = "login";
+let authBusy = false;
+let authRecoveryMode = false;
+let coreAppInitialized = false;
+let appSessionReady = false;
+
+let state = getDefaultState();
 let toastTimer = null, draggedModuleId = null, activeStudyDateKey = todayKey(), editingSessionId = null;
 let aiInputMode = "image", aiImageFile = null, aiImagePreviewUrl = "", aiContextDateKey = todayKey(), aiLinkedSessionId = "", aiSelectedSystem = "", aiCurrentAnalysis = null, aiQuizRuntime = null, aiBusy = false;
 
-function getDefaultState(){return {version:"0.5B.5",theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function getDefaultState(){return {version:"0.6A",theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
 function normalizeUsage(usage){
   if(!usage||typeof usage!=="object")return null;
   return {
@@ -104,10 +125,43 @@ function normalizeUsageEvent(event){
   if(!usage||!usage.totalTokens)return null;
   return {id:event.id||createId("usage"),responseId:event.responseId||null,createdAt:event.createdAt||new Date().toISOString(),model:event.model||"OpenAI",sourceType:event.sourceType||"unknown",populationContext:event.populationContext||"No determinado",detectedSystem:event.detectedSystem||"No determinado",usage};
 }
-function loadState(){const f=getDefaultState();try{const s=localStorage.getItem(STORAGE_KEY);return s?normalizeState(JSON.parse(s)):f}catch(e){console.error(e);return f}}
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:"0.5B.5",currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5"].includes(String(raw.version||""))};}
+function getUserStorageKey(userId=authUser?.id){
+  return userId ? `${STORAGE_KEY}.user.${userId}` : null;
+}
+
+function loadStateForCurrentUser(){
+  const fallback=getDefaultState();
+  const key=getUserStorageKey();
+  if(!key)return fallback;
+
+  try{
+    const existing=localStorage.getItem(key);
+    if(existing)return normalizeState(JSON.parse(existing));
+
+    const legacy=localStorage.getItem(STORAGE_KEY);
+    const claimedBy=localStorage.getItem(LEGACY_STORAGE_CLAIM_KEY);
+    if(legacy&&(!claimedBy||claimedBy===authUser?.id)){
+      const migrated=normalizeState(JSON.parse(legacy));
+      localStorage.setItem(key,JSON.stringify(migrated));
+      localStorage.setItem(LEGACY_STORAGE_CLAIM_KEY,String(authUser?.id||""));
+      return migrated;
+    }
+  }catch(error){
+    console.error("No se pudo cargar el progreso del usuario.",error)
+  }
+
+  const name=getAuthDisplayName(authUser);
+  if(name)fallback.profile.name=name;
+  return fallback;
+}
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:"0.6A",currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5"].includes(String(raw.version||""))};}
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
-function saveState(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}catch(e){console.error(e)}}
+function saveState(){
+  const key=getUserStorageKey();
+  if(!key)return;
+  try{localStorage.setItem(key,JSON.stringify(state))}
+  catch(e){console.error(e)}
+}
 function escapeHTML(v=""){return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 function createId(prefix="item"){return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`}
 function clamp(v,min,max){return Math.min(Math.max(v,min),max)}
@@ -175,7 +229,456 @@ function getPendingPastStudyDays(){const s=getStudySchedule();if(!s)return [];co
 function setActiveStudyDate(localDate){if(!parseLocalDate(localDate))return;editingSessionId=null;activeStudyDateKey=localDate;renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 function returnToToday(){editingSessionId=null;activeStudyDateKey=todayKey();renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 
-function initApp(){applyTheme();initNavigation();initSidebar();initThemeToggle();initForms();initModal();initPlannerControls();initDataActions();initSessionEditControls();initAIControls();populateStaticSelects();let scheduleChanged=migrateLegacyPlannerIfNeeded();if(ensureHistoricalScheduleLocks())scheduleChanged=true;if(scheduleChanged)saveState();renderAll();navigateTo(state.currentPage||"dashboard",false)}
+/* ======================== AUTH · V0.6A ======================== */
+
+function getAuthDisplayName(user=authUser){
+  if(!user)return "";
+  const metadataName=String(user.user_metadata?.full_name||user.user_metadata?.name||"").trim();
+  if(metadataName)return metadataName;
+  const email=String(user.email||"").trim();
+  return email ? email.split("@")[0] : "Estudiante";
+}
+
+function getAuthProvider(user=authUser){
+  const providers=Array.isArray(user?.app_metadata?.providers)?user.app_metadata.providers:[];
+  const provider=user?.app_metadata?.provider||providers[0]||"email";
+  if(provider==="google")return "Google";
+  if(provider==="email")return "E-mail";
+  return provider.charAt(0).toUpperCase()+provider.slice(1);
+}
+
+function getAuthRedirectUrl(){
+  return `${window.location.origin}/`;
+}
+
+function setAuthStatus(message="",type="info"){
+  const el=document.getElementById("authStatus");
+  if(!el)return;
+  if(!message){
+    el.hidden=true;
+    el.textContent="";
+    el.className="auth-status";
+    return;
+  }
+  el.hidden=false;
+  el.textContent=message;
+  el.className=`auth-status ${type}`;
+}
+
+function setAuthBusy(isBusy){
+  authBusy=Boolean(isBusy);
+  const submit=document.getElementById("authSubmitButton");
+  const google=document.getElementById("authGoogleButton");
+  if(submit)submit.disabled=authBusy;
+  if(google)google.disabled=authBusy;
+}
+
+function setAuthMode(mode="login"){
+  authMode=["login","signup","forgot","recovery"].includes(mode)?mode:"login";
+  const title=document.getElementById("authTitle");
+  const subtitle=document.getElementById("authSubtitle");
+  const tabs=document.getElementById("authTabs");
+  const google=document.getElementById("authGoogleButton");
+  const divider=document.getElementById("authDivider");
+  const nameGroup=document.getElementById("authNameGroup");
+  const emailGroup=document.getElementById("authEmailGroup");
+  const passwordGroup=document.getElementById("authPasswordGroup");
+  const confirmGroup=document.getElementById("authConfirmGroup");
+  const password=document.getElementById("authPassword");
+  const confirm=document.getElementById("authPasswordConfirm");
+  const passwordLabel=document.getElementById("authPasswordLabel");
+  const submit=document.getElementById("authSubmitButton");
+  const forgot=document.getElementById("authForgotButton");
+  const back=document.getElementById("authBackButton");
+
+  document.querySelectorAll("[data-auth-mode]").forEach(button=>{
+    button.classList.toggle("active",button.dataset.authMode===authMode)
+  });
+
+  if(authMode==="login"){
+    title.textContent="Bienvenido a BOARDS";
+    subtitle.textContent="Inicia sesión para abrir tu espacio personal de estudio.";
+    tabs.hidden=false; google.hidden=false; divider.hidden=false;
+    nameGroup.hidden=true; emailGroup.hidden=false; passwordGroup.hidden=false; confirmGroup.hidden=true;
+    passwordLabel.textContent="Contraseña";
+    password.autocomplete="current-password";
+    password.required=true;
+    confirm.required=false;
+    submit.textContent="Iniciar sesión";
+    forgot.hidden=false; back.hidden=true;
+  }
+
+  if(authMode==="signup"){
+    title.textContent="Crea tu cuenta BOARDS";
+    subtitle.textContent="Tu progreso quedará separado del de otros usuarios en este dispositivo.";
+    tabs.hidden=false; google.hidden=false; divider.hidden=false;
+    nameGroup.hidden=false; emailGroup.hidden=false; passwordGroup.hidden=false; confirmGroup.hidden=false;
+    passwordLabel.textContent="Contraseña";
+    password.autocomplete="new-password";
+    password.required=true;
+    confirm.required=true;
+    submit.textContent="Crear cuenta";
+    forgot.hidden=true; back.hidden=true;
+  }
+
+  if(authMode==="forgot"){
+    title.textContent="Recupera tu contraseña";
+    subtitle.textContent="Te enviaremos un enlace seguro al correo de tu cuenta.";
+    tabs.hidden=true; google.hidden=true; divider.hidden=true;
+    nameGroup.hidden=true; emailGroup.hidden=false; passwordGroup.hidden=true; confirmGroup.hidden=true;
+    password.required=false; confirm.required=false;
+    submit.textContent="Enviar enlace de recuperación";
+    forgot.hidden=true; back.hidden=false;
+  }
+
+  if(authMode==="recovery"){
+    title.textContent="Crea una nueva contraseña";
+    subtitle.textContent="El enlace de recuperación fue validado. Define tu nueva contraseña.";
+    tabs.hidden=true; google.hidden=true; divider.hidden=true;
+    nameGroup.hidden=true; emailGroup.hidden=true; passwordGroup.hidden=false; confirmGroup.hidden=false;
+    passwordLabel.textContent="Nueva contraseña";
+    password.autocomplete="new-password";
+    password.required=true; confirm.required=true;
+    submit.textContent="Guardar nueva contraseña";
+    forgot.hidden=true; back.hidden=false;
+  }
+
+  setAuthStatus();
+}
+
+function showAuthGate(mode=authMode){
+  document.getElementById("appShell")?.setAttribute("hidden","");
+  const gate=document.getElementById("authGate");
+  if(gate)gate.hidden=false;
+  setAuthMode(mode);
+}
+
+function showApplication(){
+  const gate=document.getElementById("authGate");
+  if(gate)gate.hidden=true;
+  document.getElementById("appShell")?.removeAttribute("hidden");
+}
+
+function friendlyAuthError(error){
+  const raw=String(error?.message||error||"No se pudo completar la autenticación.");
+  const lower=raw.toLowerCase();
+  if(lower.includes("invalid login credentials"))return "Correo o contraseña incorrectos.";
+  if(lower.includes("email not confirmed"))return "Primero confirma tu correo desde el enlace que te enviamos.";
+  if(lower.includes("user already registered"))return "Ya existe una cuenta con este correo.";
+  if(lower.includes("password should be at least"))return "La contraseña debe tener al menos 6 caracteres.";
+  if(lower.includes("signup is disabled"))return "La creación de cuentas está desactivada temporalmente.";
+  if(lower.includes("rate limit"))return "Se hicieron demasiados intentos. Espera un momento y vuelve a intentar.";
+  return raw;
+}
+
+function initAuthControls(){
+  document.querySelectorAll("[data-auth-mode]").forEach(button=>{
+    button.addEventListener("click",()=>setAuthMode(button.dataset.authMode))
+  });
+
+  document.getElementById("authForgotButton")?.addEventListener("click",()=>setAuthMode("forgot"));
+
+  document.getElementById("authBackButton")?.addEventListener("click",async()=>{
+    if(authMode==="recovery"&&supabase){
+      await supabase.auth.signOut();
+    }
+    authRecoveryMode=false;
+    setAuthMode("login");
+  });
+
+  document.getElementById("authForm")?.addEventListener("submit",handleAuthSubmit);
+  document.getElementById("authGoogleButton")?.addEventListener("click",signInWithGoogle);
+  document.getElementById("settingsSignOutButton")?.addEventListener("click",signOutCurrentUser);
+}
+
+async function handleAuthSubmit(event){
+  event.preventDefault();
+  if(authBusy)return;
+  if(!supabase){
+    setAuthStatus("Faltan las variables VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY.","error");
+    return;
+  }
+
+  const email=String(document.getElementById("authEmail")?.value||"").trim();
+  const password=String(document.getElementById("authPassword")?.value||"");
+  const confirmation=String(document.getElementById("authPasswordConfirm")?.value||"");
+  const name=String(document.getElementById("authName")?.value||"").trim();
+
+  try{
+    setAuthBusy(true);
+    setAuthStatus();
+
+    if(authMode==="login"){
+      const {data,error}=await supabase.auth.signInWithPassword({email,password});
+      if(error)throw error;
+      if(data?.session)await activateAuthenticatedSession(data.session);
+      return;
+    }
+
+    if(authMode==="signup"){
+      if(!name){
+        setAuthStatus("Escribe tu nombre para crear la cuenta.","error");
+        return;
+      }
+      if(password.length<6){
+        setAuthStatus("La contraseña debe tener al menos 6 caracteres.","error");
+        return;
+      }
+      if(password!==confirmation){
+        setAuthStatus("Las contraseñas no coinciden.","error");
+        return;
+      }
+
+      const {data,error}=await supabase.auth.signUp({
+        email,
+        password,
+        options:{
+          data:{full_name:name},
+          emailRedirectTo:getAuthRedirectUrl()
+        }
+      });
+      if(error)throw error;
+
+      if(data?.session){
+        await activateAuthenticatedSession(data.session);
+      }else{
+        setAuthStatus("Cuenta creada. Revisa tu correo y confirma el registro antes de iniciar sesión.","success");
+        document.getElementById("authPassword").value="";
+        document.getElementById("authPasswordConfirm").value="";
+      }
+      return;
+    }
+
+    if(authMode==="forgot"){
+      if(!email){
+        setAuthStatus("Escribe el correo de tu cuenta.","error");
+        return;
+      }
+      const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:getAuthRedirectUrl()});
+      if(error)throw error;
+      setAuthStatus("Te enviamos el enlace de recuperación. Revisa tu correo.","success");
+      return;
+    }
+
+    if(authMode==="recovery"){
+      if(password.length<6){
+        setAuthStatus("La nueva contraseña debe tener al menos 6 caracteres.","error");
+        return;
+      }
+      if(password!==confirmation){
+        setAuthStatus("Las contraseñas no coinciden.","error");
+        return;
+      }
+      const {data,error}=await supabase.auth.updateUser({password});
+      if(error)throw error;
+      authRecoveryMode=false;
+      if(data?.user){
+        authUser=data.user;
+        const {data:sessionData}=await supabase.auth.getSession();
+        if(sessionData?.session)await activateAuthenticatedSession(sessionData.session,{force:true});
+      }
+      showApplication();
+      showToast("Contraseña actualizada correctamente.");
+      return;
+    }
+  }catch(error){
+    console.error("Auth error:",error);
+    setAuthStatus(friendlyAuthError(error),"error");
+  }finally{
+    setAuthBusy(false);
+  }
+}
+
+async function signInWithGoogle(){
+  if(authBusy)return;
+  if(!supabase){
+    setAuthStatus("Supabase no está configurado en este entorno.","error");
+    return;
+  }
+
+  try{
+    setAuthBusy(true);
+    setAuthStatus("Abriendo Google…","info");
+    const {error}=await supabase.auth.signInWithOAuth({
+      provider:"google",
+      options:{redirectTo:getAuthRedirectUrl()}
+    });
+    if(error)throw error;
+  }catch(error){
+    console.error("Google auth error:",error);
+    setAuthStatus(friendlyAuthError(error),"error");
+    setAuthBusy(false);
+  }
+}
+
+async function signOutCurrentUser(){
+  if(!supabase)return;
+  const button=document.getElementById("settingsSignOutButton");
+  if(button)button.disabled=true;
+  try{
+    const {error}=await supabase.auth.signOut();
+    if(error)throw error;
+  }catch(error){
+    console.error(error);
+    showToast(friendlyAuthError(error));
+    if(button)button.disabled=false;
+  }
+}
+
+async function syncAuthDisplayName(name){
+  if(!supabase||!authUser||!name)return;
+  const current=String(authUser.user_metadata?.full_name||"").trim();
+  if(current===name)return;
+  try{
+    const {data,error}=await supabase.auth.updateUser({data:{full_name:name}});
+    if(error)throw error;
+    if(data?.user)authUser=data.user;
+  }catch(error){
+    console.warn("No se pudo sincronizar el nombre del perfil.",error)
+  }
+}
+
+function renderAccountSettings(){
+  const email=document.getElementById("settingsAccountEmail");
+  const provider=document.getElementById("settingsAccountProvider");
+  const created=document.getElementById("settingsAccountCreated");
+  if(email)email.textContent=authUser?.email||"—";
+  if(provider)provider.textContent=getAuthProvider(authUser);
+  if(created){
+    created.textContent=authUser?.created_at
+      ? new Intl.DateTimeFormat("es-PA",{day:"2-digit",month:"short",year:"numeric"}).format(new Date(authUser.created_at))
+      : "—";
+  }
+}
+
+async function activateAuthenticatedSession(session,{force=false}={}){
+  if(!session?.user)return;
+  const changedUser=authUser?.id!==session.user.id;
+  authSession=session;
+  authUser=session.user;
+
+  if(changedUser||force||!appSessionReady){
+    state=loadStateForCurrentUser();
+    const authName=getAuthDisplayName(authUser);
+    if(!String(state.profile?.name||"").trim()&&authName){
+      state.profile.name=authName;
+      saveState();
+    }
+
+    activeStudyDateKey=todayKey();
+    aiContextDateKey=todayKey();
+    editingSessionId=null;
+    aiCurrentAnalysis=null;
+    aiQuizRuntime=null;
+
+    let scheduleChanged=migrateLegacyPlannerIfNeeded();
+    if(ensureHistoricalScheduleLocks())scheduleChanged=true;
+    if(scheduleChanged)saveState();
+    appSessionReady=true;
+  }
+
+  initializeCoreAppOnce();
+  applyTheme();
+  renderAll();
+  showApplication();
+  navigateTo(state.currentPage||"dashboard",false);
+}
+
+async function handleAuthStateChange(event,session){
+  if(event==="PASSWORD_RECOVERY"){
+    authRecoveryMode=true;
+    authSession=session||authSession;
+    authUser=session?.user||authUser;
+    showAuthGate("recovery");
+    return;
+  }
+
+  if(event==="SIGNED_OUT"){
+    authSession=null;
+    authUser=null;
+    appSessionReady=false;
+    state=getDefaultState();
+    showAuthGate("login");
+    return;
+  }
+
+  if(session?.user){
+    authSession=session;
+    authUser=session.user;
+    if(event==="SIGNED_IN"||event==="INITIAL_SESSION"){
+      if(!authRecoveryMode)await activateAuthenticatedSession(session);
+      return;
+    }
+    if(event==="USER_UPDATED"){
+      renderProfile();
+      renderAccountSettings();
+      return;
+    }
+    return;
+  }
+
+  if(event==="INITIAL_SESSION"&&!session){
+    showAuthGate("login");
+  }
+}
+
+function initializeCoreAppOnce(){
+  if(coreAppInitialized)return;
+  initNavigation();
+  initSidebar();
+  initThemeToggle();
+  initForms();
+  initModal();
+  initPlannerControls();
+  initDataActions();
+  initSessionEditControls();
+  initAIControls();
+  populateStaticSelects();
+  coreAppInitialized=true;
+}
+
+async function initApp(){
+  initAuthControls();
+
+  if(!supabase){
+    showAuthGate("login");
+    setAuthStatus("Faltan las variables de Supabase. Verifica VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY en este entorno.","error");
+    return;
+  }
+
+  supabase.auth.onAuthStateChange((event,session)=>{
+    window.setTimeout(()=>handleAuthStateChange(event,session),0);
+  });
+
+  const params=new URLSearchParams(window.location.search);
+  const hashParams=new URLSearchParams(window.location.hash.replace(/^#/,""));
+  const oauthError=params.get("error_description")||hashParams.get("error_description");
+  const recoveryRequested=params.get("type")==="recovery"||hashParams.get("type")==="recovery";
+  if(oauthError){
+    showAuthGate("login");
+    setAuthStatus(decodeURIComponent(oauthError),"error");
+    return;
+  }
+
+  try{
+    const {data,error}=await supabase.auth.getSession();
+    if(error)throw error;
+    if(data?.session?.user&&recoveryRequested){
+      authRecoveryMode=true;
+      authSession=data.session;
+      authUser=data.session.user;
+      showAuthGate("recovery");
+    }else if(data?.session?.user){
+      await activateAuthenticatedSession(data.session);
+    }else{
+      showAuthGate("login");
+    }
+  }catch(error){
+    console.error("Supabase session error:",error);
+    showAuthGate("login");
+    setAuthStatus(friendlyAuthError(error),"error");
+  }
+}
 function initNavigation(){document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigateTo(b.dataset.page)));document.querySelectorAll("[data-page-link]").forEach(b=>b.addEventListener("click",()=>navigateTo(b.dataset.pageLink)))}
 function navigateTo(pageName,persist=true){if(!PAGE_META[pageName])pageName="dashboard";document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));document.getElementById(`page-${pageName}`)?.classList.add("active");document.querySelectorAll(".nav-item").forEach(i=>i.classList.toggle("active",i.dataset.page===pageName));document.getElementById("pageTitle").textContent=PAGE_META[pageName].title;document.getElementById("pageSubtitle").textContent=PAGE_META[pageName].subtitle;if(pageName==="today")renderToday();if(pageName==="ai")renderAIPage();if(persist){state.currentPage=pageName;saveState()}closeSidebar();window.scrollTo({top:0,behavior:"smooth"})}
 function initSidebar(){document.getElementById("menuButton")?.addEventListener("click",openSidebar);document.getElementById("sidebarClose")?.addEventListener("click",closeSidebar);document.getElementById("sidebarOverlay")?.addEventListener("click",closeSidebar)}
@@ -186,7 +689,15 @@ function applyTheme(){document.body.classList.toggle("dark",state.theme==="dark"
 function populateStaticSelects(){fillSelect("errorSystem",SYSTEMS);fillSelect("errorSystemFilter",SYSTEMS,true);fillSelect("errorPopulation",POPULATION_CONTEXTS);fillSelect("errorPopulationFilter",POPULATION_CONTEXTS,true);fillSelect("errorType",ERROR_TYPES);fillSelect("errorTypeFilter",ERROR_TYPES,true)}
 function fillSelect(id,values,all=false){const el=document.getElementById(id);if(!el)return;el.innerHTML=(all?'<option value="all">Todos</option>':"")+values.map(v=>`<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("")}
 function renderAll(){renderProfile();renderDashboard();renderToday();renderPlanner();renderPrebank();renderAIPage();renderErrors();renderPerformance();renderSettings();renderSidebar()}
-function renderProfile(){const name=state.profile.name.trim()||"Estudiante";document.getElementById("profileName").textContent=name;document.getElementById("profileAvatar").textContent=name.split(/\s+/).slice(0,2).map(p=>p[0]).join("").toUpperCase()||"BP"}
+function renderProfile(){
+  const name=String(state.profile?.name||"").trim()||getAuthDisplayName(authUser)||"Estudiante";
+  const nameEl=document.getElementById("profileName");
+  const avatar=document.getElementById("profileAvatar");
+  const email=document.getElementById("profileEmail");
+  if(nameEl)nameEl.textContent=name;
+  if(avatar)avatar.textContent=name.split(/\s+/).slice(0,2).map(p=>p[0]).join("").toUpperCase()||"BP";
+  if(email)email.textContent=authUser?.email||"BOARDS Prep";
+}
 function getGreeting(){const h=new Date().getHours();return h<12?"Buenos días":h<18?"Buenas tardes":"Buenas noches"}
 function renderDashboard(){const ctx=getOperationalContext(new Date()),m=getModule(ctx.isStudyDay?ctx.moduleId:state.currentModuleId),pos=getModulePosition(m.id),name=state.profile.name.trim(),schedule=getStudySchedule();document.getElementById("dashboardGreeting").textContent=name?`${getGreeting()}, ${name.split(" ")[0]}`:getGreeting();document.getElementById("dashboardWeekDescription").textContent=ctx.isStudyDay?`${ctx.phaseLabel||"Plan adaptativo"} · ${m.title}`:`Bloque curricular ${pos} de 8 · ${m.title}`;document.getElementById("dashboardPlanMode").textContent=schedule?`Plan adaptativo · ${schedule.profile.label}`:(state.studyMode==="custom"?"Orden personalizado":"Orden recomendado");renderDashboardSchedule();renderDashboardStats();renderDashboardToday();renderPriorities();renderDashboardWeeks();renderOverallProgress()}
 function renderDashboardSchedule(){const c=document.getElementById("dashboardScheduleInfo"),schedule=getStudySchedule(),ctx=getOperationalContext(new Date());if(!schedule){c.textContent="Configura tus fechas para generar el calendario adaptativo.";return}const b=ctx.isStudyDay?ctx.block:getScheduleBlock(state.currentModuleId);c.textContent=b?`${formatDateRange(b.startDate,b.endDate)} · ${b.studyDays} días efectivos en esta visita · ${schedule.totalStudyDays} días efectivos totales`:`${formatDate(schedule.start)} → ${formatDate(schedule.exam)} · ${schedule.totalStudyDays} días efectivos` }
@@ -253,8 +764,34 @@ function addCalendarMonths(date,months){const d=cloneDate(date),day=d.getDate();
 function applyPresetEndDate(start,presetKey){const preset=PLAN_PRESETS[presetKey],d=cloneDate(start);if(!preset||presetKey==='custom')return null;if(preset.weeks)return addDays(d,preset.weeks*7);if(preset.months)return addCalendarMonths(d,preset.months);if(preset.years){d.setFullYear(d.getFullYear()+preset.years);return d}return null}
 function handlePlanPresetChange(){const select=document.getElementById("settingsPlanPreset"),startInput=document.getElementById("settingsStartDate"),examInput=document.getElementById("settingsExamDate");if(!select||select.value==='custom'){renderSettingsPlanPreview();return}let start=parseLocalDate(startInput.value);if(!start){start=normalizeDate(new Date());startInput.value=dateKey(start)}const end=applyPresetEndDate(start,select.value);if(end)examInput.value=dateKey(end);renderSettingsPlanPreview()}
 function renderSettingsPlanPreview(){const c=document.getElementById("settingsPlanPreview");if(!c)return;const start=parseLocalDate(document.getElementById("settingsStartDate")?.value),exam=parseLocalDate(document.getElementById("settingsExamDate")?.value),studyDays=Array.from(document.querySelectorAll("[data-study-day]:checked")).map(i=>i.value),goal=Number(document.getElementById("settingsDailyGoal")?.value)||40;if(!start||!exam||exam<=start||!studyDays.length){c.innerHTML='<strong>Vista previa del plan</strong><span>Completa las fechas y selecciona al menos un día de estudio.</span>';return}const dates=getStudyDates(start,exam,studyDays),profile=getPlanProfile(dates.length),calendarDays=differenceInDays(start,exam);c.innerHTML=`<div><span>ESTRATEGIA ESTIMADA</span><strong>${escapeHTML(profile.label)}</strong></div><div><span>DURACIÓN</span><strong>${escapeHTML(getPlanDurationLabel(calendarDays))}</strong></div><div><span>DÍAS EFECTIVOS</span><strong>${dates.length}</strong></div><div><span>PREGUNTAS PROYECTADAS</span><strong>${dates.length*goal}</strong></div><p>${escapeHTML(profile.description)} El historial ya realizado no se moverá al guardar cambios.</p>`}
-function renderSettings(){document.getElementById("settingsName").value=state.profile.name||"";document.getElementById("settingsStartDate").value=state.profile.startDate||"";document.getElementById("settingsExamDate").value=state.profile.examDate||"";document.getElementById("settingsDailyGoal").value=state.profile.dailyQuestionGoal||40;const preset=document.getElementById("settingsPlanPreset");if(preset)preset.value=state.profile.planPreset||"custom";document.querySelectorAll("[data-study-day]").forEach(i=>i.checked=state.profile.studyDays.includes(i.value));renderSettingsPlanPreview()}
-function handleSettingsSubmit(e){e.preventDefault();const startDate=document.getElementById("settingsStartDate").value,examDate=document.getElementById("settingsExamDate").value;if(startDate&&examDate&&parseLocalDate(examDate)<=parseLocalDate(startDate)){showToast("La fecha del examen debe ser posterior al inicio.");return}const studyDays=Array.from(document.querySelectorAll("[data-study-day]:checked")).map(i=>i.value);if(!studyDays.length){showToast("Selecciona al menos un día de estudio.");return}ensureHistoricalScheduleLocks();state.profile={...state.profile,name:document.getElementById("settingsName").value.trim(),startDate,examDate,dailyQuestionGoal:clamp(Number(document.getElementById("settingsDailyGoal").value)||40,5,200),studyDays,planPreset:document.getElementById("settingsPlanPreset")?.value||"custom"};activeStudyDateKey=todayKey();aiContextDateKey=todayKey();editingSessionId=null;saveState();renderAll();showToast("Plan futuro recalculado. El historial previo permanece intacto.")}
+function renderSettings(){
+  document.getElementById("settingsName").value=state.profile.name||"";
+  document.getElementById("settingsStartDate").value=state.profile.startDate||"";
+  document.getElementById("settingsExamDate").value=state.profile.examDate||"";
+  document.getElementById("settingsDailyGoal").value=state.profile.dailyQuestionGoal||40;
+  const preset=document.getElementById("settingsPlanPreset");
+  if(preset)preset.value=state.profile.planPreset||"custom";
+  document.querySelectorAll("[data-study-day]").forEach(i=>i.checked=state.profile.studyDays.includes(i.value));
+  renderSettingsPlanPreview();
+  renderAccountSettings();
+}
+function handleSettingsSubmit(e){
+  e.preventDefault();
+  const startDate=document.getElementById("settingsStartDate").value,examDate=document.getElementById("settingsExamDate").value;
+  if(startDate&&examDate&&parseLocalDate(examDate)<=parseLocalDate(startDate)){showToast("La fecha del examen debe ser posterior al inicio.");return}
+  const studyDays=Array.from(document.querySelectorAll("[data-study-day]:checked")).map(i=>i.value);
+  if(!studyDays.length){showToast("Selecciona al menos un día de estudio.");return}
+  ensureHistoricalScheduleLocks();
+  const name=document.getElementById("settingsName").value.trim();
+  state.profile={...state.profile,name,startDate,examDate,dailyQuestionGoal:clamp(Number(document.getElementById("settingsDailyGoal").value)||40,5,200),studyDays,planPreset:document.getElementById("settingsPlanPreset")?.value||"custom"};
+  activeStudyDateKey=todayKey();
+  aiContextDateKey=todayKey();
+  editingSessionId=null;
+  saveState();
+  if(name)syncAuthDisplayName(name);
+  renderAll();
+  showToast("Plan futuro recalculado. El historial previo permanece intacto.");
+}
 function renderSidebar(){const ctx=getOperationalContext(new Date()),moduleId=ctx.isStudyDay?ctx.moduleId:state.currentModuleId,m=getModule(moduleId),p=getModuleProgress(moduleId),progressBox=document.querySelector(".sidebar-progress"),hint=document.getElementById("sidebarProgressHint");document.getElementById("sidebarProgressTitle").textContent=m.shortTitle;document.getElementById("sidebarProgressLabel").textContent=`${p}%`;document.getElementById("sidebarProgressBar").style.width=`${p}%`;if(hint)hint.textContent="Progreso del plan actual";if(progressBox)progressBox.title="Este porcentaje refleja el trabajo completado respecto al plan actual. Si amplías la fecha del examen, BOARDS puede añadir jornadas futuras y el porcentaje puede bajar sin borrar tu progreso realizado.";document.getElementById("topCurrentWeek").textContent=`${getModulePosition(moduleId)} / 8`;document.getElementById("sidebarErrorCount").textContent=state.errors.length}
 function calculateStreak(){const dates=new Set(state.bankSessions.map(getSessionDateKey).filter(Boolean));if(!dates.size)return 0;let streak=0,cursor=normalizeDate(new Date());while(true){const k=dateKey(cursor);if(!dates.has(k)){if(streak===0&&k===todayKey()){cursor=addDays(cursor,-1);continue}break}streak++;cursor=addDays(cursor,-1)}return streak}
 function getModuleProgress(moduleId){const m=getModule(moduleId),completed=m.topics.filter((_,i)=>isPrebankCompleted(moduleId,i)).length,topicProgress=m.topics.length?completed/m.topics.length*100:0,blocks=getScheduleBlocksForModule(moduleId),dates=[...new Map(blocks.flatMap(b=>b.dates).map(d=>[dateKey(d),d])).values()];if(dates.length){const vals=dates.map(d=>getDailyCompletionData(dateKey(d),moduleId).percentage),avg=vals.length?vals.reduce((a,v)=>a+v,0)/vals.length:0;return Math.round(topicProgress*.4+avg*.6)}const old=FALLBACK_MODULE_TASKS.filter(t=>Boolean(state.plannerTasks?.[`week-${moduleId}`]?.[t.id])).length,total=m.topics.length+FALLBACK_MODULE_TASKS.length;return Math.round((completed+old)/total*100)}
@@ -266,7 +803,7 @@ function importData(e){const file=e.target.files?.[0];if(!file)return;const r=ne
 function resetData(){if(!window.confirm("¿Eliminar todo tu progreso local?"))return;state=getDefaultState();activeStudyDateKey=todayKey();aiContextDateKey=todayKey();editingSessionId=null;aiCurrentAnalysis=null;aiQuizRuntime=null;clearAIImage(false);saveState();applyTheme();renderAll();navigateTo("dashboard");showToast("Datos reiniciados.")}
 function showToast(message){const t=document.getElementById("toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2600)}
 
-/* ======================== BOARDS AI V0.5B.5 ======================== */
+/* ======================== BOARDS AI V0.6A ======================== */
 function initAIControls(){
   document.querySelectorAll("[data-ai-input-mode]").forEach(b=>b.addEventListener("click",()=>setAIInputMode(b.dataset.aiInputMode)));
   const input=document.getElementById("aiImageInput"),drop=document.getElementById("aiDropzone");
@@ -367,7 +904,7 @@ async function runAIAnalysis(){
     try{
       response=await fetch("/.netlify/functions/analyze-question",{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json",...(authSession?.access_token?{Authorization:`Bearer ${authSession.access_token}`}:{})},
         body:JSON.stringify(payload),
         signal:controller.signal
       })
