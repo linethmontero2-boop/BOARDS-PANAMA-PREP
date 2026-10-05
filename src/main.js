@@ -16,6 +16,11 @@ const supabase = SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY
       }
     })
   : null;
+
+const CLOUD_STATE_TABLE = "boards_user_state";
+const CLOUD_STATE_SCHEMA_VERSION = 1;
+const CLOUD_SYNC_DEBOUNCE_MS = 750;
+
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
 const SYSTEMS = ["Cardiovascular","Respiratorio","Gastroenterología","Hematología","Neurología","Psiquiatría","Renal / Genitourinario","Ginecología","Obstetricia","Pediatría","Inmunología","Reumatología","Endocrinología","Dermatología","Bioestadística / Epidemiología","Ética / Salud Pública"];
@@ -82,7 +87,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6A"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6B"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -94,11 +99,18 @@ let authRecoveryMode = false;
 let coreAppInitialized = false;
 let appSessionReady = false;
 
+let cloudSyncReady = false;
+let cloudSyncTimer = null;
+let cloudSyncInFlight = null;
+let cloudSyncQueued = false;
+let cloudLastSyncedAt = null;
+let cloudLastError = null;
+
 let state = getDefaultState();
 let toastTimer = null, draggedModuleId = null, activeStudyDateKey = todayKey(), editingSessionId = null;
 let aiInputMode = "image", aiImageFile = null, aiImagePreviewUrl = "", aiContextDateKey = todayKey(), aiLinkedSessionId = "", aiSelectedSystem = "", aiCurrentAnalysis = null, aiQuizRuntime = null, aiBusy = false;
 
-function getDefaultState(){return {version:"0.6A",theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function getDefaultState(){return {version:"0.6B",updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
 function normalizeUsage(usage){
   if(!usage||typeof usage!=="object")return null;
   return {
@@ -129,6 +141,30 @@ function getUserStorageKey(userId=authUser?.id){
   return userId ? `${STORAGE_KEY}.user.${userId}` : null;
 }
 
+function hasLocalStateForCurrentUser(userId=authUser?.id){
+  const key=getUserStorageKey(userId);
+  if(!key)return false;
+  try{return localStorage.getItem(key)!==null}
+  catch{return false}
+}
+
+function writeStateToLocal(snapshot=state,userId=authUser?.id){
+  const key=getUserStorageKey(userId);
+  if(!key)return false;
+  try{
+    localStorage.setItem(key,JSON.stringify(snapshot));
+    return true;
+  }catch(error){
+    console.error("No se pudo guardar el progreso local.",error);
+    return false;
+  }
+}
+
+function touchState(){
+  state.version="0.6B";
+  state.updatedAt=new Date().toISOString();
+}
+
 function loadStateForCurrentUser(){
   const fallback=getDefaultState();
   const key=getUserStorageKey();
@@ -154,13 +190,131 @@ function loadStateForCurrentUser(){
   if(name)fallback.profile.name=name;
   return fallback;
 }
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:"0.6A",currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5"].includes(String(raw.version||""))};}
+
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:"0.6B",updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A"].includes(String(raw.version||""))};}
+
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
-function saveState(){
-  const key=getUserStorageKey();
-  if(!key)return;
-  try{localStorage.setItem(key,JSON.stringify(state))}
-  catch(e){console.error(e)}
+
+function getStateTimestamp(snapshot){
+  const value=Date.parse(snapshot?.updatedAt||"");
+  return Number.isFinite(value)?value:0;
+}
+
+async function fetchCloudStateRow(userId=authUser?.id){
+  if(!supabase||!userId)return null;
+  const {data,error}=await supabase
+    .from(CLOUD_STATE_TABLE)
+    .select("state,schema_version,created_at,updated_at")
+    .eq("user_id",userId)
+    .maybeSingle();
+  if(error)throw error;
+  return data||null;
+}
+
+async function reconcileInitialStateWithCloud(){
+  const localExists=hasLocalStateForCurrentUser();
+  const localState=loadStateForCurrentUser();
+
+  if(!supabase||!authUser?.id){
+    return {nextState:localState,needsCloudPush:false,source:"local"};
+  }
+
+  try{
+    const row=await fetchCloudStateRow(authUser.id);
+    cloudLastError=null;
+
+    if(!row?.state){
+      return {nextState:localState,needsCloudPush:true,source:"local-first-cloud"};
+    }
+
+    const cloudState=normalizeState(row.state);
+    if(!cloudState.updatedAt&&row.updated_at)cloudState.updatedAt=row.updated_at;
+
+    const localTimestamp=getStateTimestamp(localState);
+    const cloudTimestamp=Math.max(
+      getStateTimestamp(cloudState),
+      Number.isFinite(Date.parse(row.updated_at||""))?Date.parse(row.updated_at):0
+    );
+
+    if(localExists&&localTimestamp>cloudTimestamp+1000){
+      return {nextState:localState,needsCloudPush:true,source:"local-newer"};
+    }
+
+    writeStateToLocal(cloudState,authUser.id);
+    cloudLastSyncedAt=row.updated_at||cloudState.updatedAt||null;
+    return {nextState:cloudState,needsCloudPush:false,source:"cloud"};
+  }catch(error){
+    cloudLastError=error;
+    console.warn("No se pudo descargar el progreso de Supabase. BOARDS continuará con la copia local.",error);
+    return {nextState:localState,needsCloudPush:false,source:"local-offline"};
+  }
+}
+
+function scheduleCloudStateSave(delay=CLOUD_SYNC_DEBOUNCE_MS){
+  if(!cloudSyncReady||!supabase||!authUser?.id)return;
+  cloudSyncQueued=true;
+  if(cloudSyncTimer)window.clearTimeout(cloudSyncTimer);
+  cloudSyncTimer=window.setTimeout(()=>{
+    cloudSyncTimer=null;
+    void flushCloudStateSave();
+  },Math.max(0,Number(delay)||0));
+}
+
+async function flushCloudStateSave(){
+  if(!cloudSyncReady||!supabase||!authUser?.id)return false;
+
+  if(cloudSyncTimer){
+    window.clearTimeout(cloudSyncTimer);
+    cloudSyncTimer=null;
+  }
+
+  if(cloudSyncInFlight){
+    cloudSyncQueued=true;
+    try{await cloudSyncInFlight}catch{}
+    if(cloudSyncQueued)return flushCloudStateSave();
+    return !cloudLastError;
+  }
+
+  cloudSyncQueued=false;
+  const userId=authUser.id;
+  const snapshot=JSON.parse(JSON.stringify(state));
+  const updatedAt=snapshot.updatedAt||new Date().toISOString();
+  snapshot.updatedAt=updatedAt;
+  snapshot.version="0.6B";
+
+  cloudSyncInFlight=(async()=>{
+    const {error}=await supabase
+      .from(CLOUD_STATE_TABLE)
+      .upsert({
+        user_id:userId,
+        state:snapshot,
+        schema_version:CLOUD_STATE_SCHEMA_VERSION,
+        updated_at:updatedAt
+      },{onConflict:"user_id"});
+
+    if(error)throw error;
+    cloudLastSyncedAt=updatedAt;
+    cloudLastError=null;
+    return true;
+  })();
+
+  try{
+    await cloudSyncInFlight;
+    return true;
+  }catch(error){
+    cloudLastError=error;
+    console.warn("No se pudo sincronizar el progreso con Supabase. La copia local se conserva y BOARDS reintentará en el próximo cambio.",error);
+    return false;
+  }finally{
+    cloudSyncInFlight=null;
+    if(cloudSyncQueued&&authUser?.id===userId)scheduleCloudStateSave(150);
+  }
+}
+
+function saveState({syncCloud=true,touch=true}={}){
+  if(touch)touchState();
+  if(!writeStateToLocal())return;
+  if(syncCloud)scheduleCloudStateSave();
 }
 function escapeHTML(v=""){return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 function createId(prefix="item"){return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`}
@@ -229,7 +383,7 @@ function getPendingPastStudyDays(){const s=getStudySchedule();if(!s)return [];co
 function setActiveStudyDate(localDate){if(!parseLocalDate(localDate))return;editingSessionId=null;activeStudyDateKey=localDate;renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 function returnToToday(){editingSessionId=null;activeStudyDateKey=todayKey();renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 
-/* ======================== AUTH · V0.6A ======================== */
+/* ======================== AUTH · V0.6B ======================== */
 
 function getAuthDisplayName(user=authUser){
   if(!user)return "";
@@ -516,6 +670,7 @@ async function signOutCurrentUser(){
   const button=document.getElementById("settingsSignOutButton");
   if(button)button.disabled=true;
   try{
+    await flushCloudStateSave();
     const {error}=await supabase.auth.signOut();
     if(error)throw error;
   }catch(error){
@@ -558,11 +713,18 @@ async function activateAuthenticatedSession(session,{force=false}={}){
   authUser=session.user;
 
   if(changedUser||force||!appSessionReady){
-    state=loadStateForCurrentUser();
+    cloudSyncReady=false;
+    cloudSyncQueued=false;
+    if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
+
+    const reconciliation=await reconcileInitialStateWithCloud();
+    state=normalizeState(reconciliation.nextState);
+
+    let stateChanged=false;
     const authName=getAuthDisplayName(authUser);
     if(!String(state.profile?.name||"").trim()&&authName){
       state.profile.name=authName;
-      saveState();
+      stateChanged=true;
     }
 
     activeStudyDateKey=todayKey();
@@ -571,9 +733,19 @@ async function activateAuthenticatedSession(session,{force=false}={}){
     aiCurrentAnalysis=null;
     aiQuizRuntime=null;
 
-    let scheduleChanged=migrateLegacyPlannerIfNeeded();
-    if(ensureHistoricalScheduleLocks())scheduleChanged=true;
-    if(scheduleChanged)saveState();
+    if(migrateLegacyPlannerIfNeeded())stateChanged=true;
+    if(ensureHistoricalScheduleLocks())stateChanged=true;
+
+    if(stateChanged||reconciliation.needsCloudPush&&!state.updatedAt){
+      touchState();
+      writeStateToLocal();
+      stateChanged=true;
+    }else{
+      writeStateToLocal();
+    }
+
+    cloudSyncReady=true;
+    if(reconciliation.needsCloudPush||stateChanged)scheduleCloudStateSave(0);
     appSessionReady=true;
   }
 
@@ -597,6 +769,11 @@ async function handleAuthStateChange(event,session){
     authSession=null;
     authUser=null;
     appSessionReady=false;
+    cloudSyncReady=false;
+    cloudSyncQueued=false;
+    cloudLastSyncedAt=null;
+    cloudLastError=null;
+    if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
     state=getDefaultState();
     showAuthGate("login");
     return;
@@ -634,6 +811,12 @@ function initializeCoreAppOnce(){
   initSessionEditControls();
   initAIControls();
   populateStaticSelects();
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="hidden"&&cloudSyncReady)void flushCloudStateSave();
+  });
+  window.addEventListener("pagehide",()=>{
+    if(cloudSyncReady)void flushCloudStateSave();
+  });
   coreAppInitialized=true;
 }
 
@@ -803,7 +986,7 @@ function importData(e){const file=e.target.files?.[0];if(!file)return;const r=ne
 function resetData(){if(!window.confirm("¿Eliminar todo tu progreso local?"))return;state=getDefaultState();activeStudyDateKey=todayKey();aiContextDateKey=todayKey();editingSessionId=null;aiCurrentAnalysis=null;aiQuizRuntime=null;clearAIImage(false);saveState();applyTheme();renderAll();navigateTo("dashboard");showToast("Datos reiniciados.")}
 function showToast(message){const t=document.getElementById("toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2600)}
 
-/* ======================== BOARDS AI V0.6A ======================== */
+/* ======================== BOARDS AI V0.6B ======================== */
 function initAIControls(){
   document.querySelectorAll("[data-ai-input-mode]").forEach(b=>b.addEventListener("click",()=>setAIInputMode(b.dataset.aiInputMode)));
   const input=document.getElementById("aiImageInput"),drop=document.getElementById("aiDropzone");
