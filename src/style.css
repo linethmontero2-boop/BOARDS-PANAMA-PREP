@@ -824,11 +824,18 @@ input,select,textarea{font-size:15px}
   color:var(--success);
   font-size:11px;
   font-weight:700;
+  white-space:nowrap;
+  transition:background var(--transition),color var(--transition),border-color var(--transition);
 }
+
+.account-status-badge.sync-synced{background:var(--success-soft);color:var(--success)}
+.account-status-badge.sync-syncing,.account-status-badge.sync-ready,.account-status-badge.sync-idle{background:var(--accent-soft);color:var(--accent)}
+.account-status-badge.sync-offline{background:var(--surface-hover);color:var(--text-soft)}
+.account-status-badge.sync-error{background:var(--warning-soft);color:var(--warning)}
 
 .account-summary-grid{
   display:grid;
-  grid-template-columns:1.4fr .8fr .8fr;
+  grid-template-columns:1.25fr .7fr .8fr 1fr;
   gap:10px;
   margin-bottom:14px;
 }
@@ -856,6 +863,18 @@ input,select,textarea{font-size:15px}
   text-overflow:ellipsis;
   white-space:nowrap;
   font-size:13px;
+}
+
+.account-sync-summary small{
+  display:block;
+  margin-top:5px;
+  color:var(--text-faint);
+  font-size:10px;
+  line-height:1.4;
+}
+
+.account-sync-summary strong{
+  color:var(--accent);
 }
 
 .account-local-note{

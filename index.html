@@ -69,7 +69,7 @@
         </form>
 
         <p class="auth-footnote">
-          Tu cuenta protege el acceso a BOARDS. En V0.6A el progreso se mantiene aislado por usuario en este dispositivo; la sincronización completa en la nube será la siguiente fase.
+          Tu cuenta protege el acceso a BOARDS. En V0.6B.1 tu progreso se conserva en este dispositivo y se sincroniza con tu cuenta en la nube.
         </p>
       </section>
     </div>
@@ -105,7 +105,7 @@
           <div class="progress-track compact"><div class="progress-fill" id="sidebarProgressBar"></div></div>
           <small class="sidebar-progress-hint" id="sidebarProgressHint">Progreso del plan actual</small>
         </div>
-        <div class="version-chip">BOARDS Panamá · V0.6A</div>
+        <div class="version-chip">BOARDS Panamá · V0.6B.1</div>
       </div>
     </aside>
 
@@ -238,7 +238,7 @@
       </section>
 
       <!-- ====================================================
-           BOARDS AI · V0.6A
+           BOARDS AI · V0.6B.1
            ==================================================== -->
       <section class="page" id="page-ai">
         <div class="section-heading ai-page-heading">
@@ -247,7 +247,7 @@
             <h2>BOARDS AI</h2>
             <p>Analiza una pregunta fallada y conviértela en aprendizaje reutilizable: razonamiento clínico, High-Yield, mini-quiz e Intelligent Flashcards.</p>
           </div>
-          <div class="ai-phase-badge"><span>V0.6A</span><strong>IA CONECTADA</strong></div>
+          <div class="ai-phase-badge"><span>V0.6B.1</span><strong>IA CONECTADA</strong></div>
         </div>
 
         <div class="ai-live-notice">
@@ -375,23 +375,24 @@
           </article>
 
           <article class="panel">
-            <div class="panel-header"><div><span class="panel-kicker">DATOS</span><h3>Respaldo local</h3></div></div>
+            <div class="panel-header"><div><span class="panel-kicker">DATOS</span><h3>Respaldo y nube</h3></div></div>
             <div class="settings-actions">
               <button class="button button-secondary full-width" id="exportDataButton">Exportar progreso</button>
               <label class="button button-secondary full-width file-button">Importar progreso<input id="importDataInput" type="file" accept="application/json" /></label>
               <button class="button button-danger full-width" id="resetDataButton">Reiniciar todos los datos</button>
             </div>
-            <div class="storage-note"><strong>BOARDS Panamá V0.6A</strong><p>El calendario adaptativo, jornadas protegidas, sesiones, errores y análisis permanecen almacenados localmente. Las preguntas se envían al backend seguro solo cuando pulsas “Analizar con BOARDS AI”; la captura original no se guarda en localStorage.</p></div>
+            <div class="storage-note"><strong>BOARDS Panamá V0.6B.1</strong><p>BOARDS conserva una copia local para mantener la app rápida y sincroniza tu estado de estudio con Supabase cuando tu sesión está activa. Las preguntas se envían al backend seguro solo cuando pulsas “Analizar con BOARDS AI”; la captura original no se guarda en tu progreso.</p></div>
           </article>
 
           <article class="panel account-panel">
-            <div class="panel-header"><div><span class="panel-kicker">CUENTA</span><h3>Sesión de BOARDS</h3></div><span class="account-status-badge">Protegida</span></div>
+            <div class="panel-header"><div><span class="panel-kicker">CUENTA</span><h3>Sesión de BOARDS</h3></div><span class="account-status-badge sync-idle" id="settingsCloudSyncBadge" aria-live="polite">☁ Preparando</span></div>
             <div class="account-summary-grid">
               <div><span>CORREO</span><strong id="settingsAccountEmail">—</strong></div>
               <div><span>MÉTODO</span><strong id="settingsAccountProvider">—</strong></div>
               <div><span>CUENTA CREADA</span><strong id="settingsAccountCreated">—</strong></div>
+              <div class="account-sync-summary"><span>NUBE</span><strong id="settingsCloudSyncStatus">Preparando…</strong><small id="settingsCloudSyncDetail">Conectando tu cuenta con la copia en la nube.</small></div>
             </div>
-            <div class="account-local-note"><strong>V0.6A · Cuenta personal activa</strong><p>Tu sesión ya es personal. El progreso de estudio se guarda separado por usuario en este navegador. En la siguiente fase conectaremos ese progreso a Supabase para verlo también en otros dispositivos.</p></div>
+            <div class="account-local-note"><strong>V0.6B.1 · Cloud Sync activo</strong><p>Tu progreso queda asociado a tu cuenta. BOARDS mantiene una copia local y la sincroniza con Supabase para recuperarla en tus otros dispositivos. Si pierdes conexión, puedes seguir trabajando y la app reintentará la sincronización.</p></div>
             <button class="button button-secondary full-width" id="settingsSignOutButton" type="button">Cerrar sesión</button>
           </article>
 
