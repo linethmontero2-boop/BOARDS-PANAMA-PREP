@@ -20,6 +20,9 @@ const supabase = SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY
 const CLOUD_STATE_TABLE = "boards_user_state";
 const CLOUD_STATE_SCHEMA_VERSION = 1;
 const CLOUD_SYNC_DEBOUNCE_MS = 750;
+const CLOUD_SYNC_MAX_RETRIES = 4;
+const CLOUD_META_STORAGE_PREFIX = `${STORAGE_KEY}.cloudMeta.v1`;
+const APP_VERSION = "0.6C";
 
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
@@ -87,7 +90,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6B.1"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6C"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -105,12 +108,16 @@ let cloudSyncInFlight = null;
 let cloudSyncQueued = false;
 let cloudLastSyncedAt = null;
 let cloudLastError = null;
+let cloudRevision = null;
+let cloudBaseState = null;
+let cloudConflictCount = 0;
+let cloudLastConflictAt = null;
 
 let state = getDefaultState();
 let toastTimer = null, draggedModuleId = null, activeStudyDateKey = todayKey(), editingSessionId = null;
 let aiInputMode = "image", aiImageFile = null, aiImagePreviewUrl = "", aiContextDateKey = todayKey(), aiLinkedSessionId = "", aiSelectedSystem = "", aiCurrentAnalysis = null, aiQuizRuntime = null, aiBusy = false;
 
-function getDefaultState(){return {version:"0.6B.1",updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function getDefaultState(){return {version:APP_VERSION,updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
 function normalizeUsage(usage){
   if(!usage||typeof usage!=="object")return null;
   return {
@@ -161,7 +168,7 @@ function writeStateToLocal(snapshot=state,userId=authUser?.id){
 }
 
 function touchState(){
-  state.version="0.6B.1";
+  state.version=APP_VERSION;
   state.updatedAt=new Date().toISOString();
 }
 
@@ -191,7 +198,7 @@ function loadStateForCurrentUser(){
   return fallback;
 }
 
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:"0.6B.1",updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B"].includes(String(raw.version||""))};}
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C"].includes(String(raw.version||""))};}
 
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
 
@@ -200,11 +207,200 @@ function getStateTimestamp(snapshot){
   return Number.isFinite(value)?value:0;
 }
 
+function cloneJSON(value){
+  if(value===undefined)return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+const MERGE_MISSING = Symbol("merge-missing");
+
+function isPlainObject(value){
+  return Boolean(value)&&typeof value==="object"&&!Array.isArray(value);
+}
+
+function valuesEqual(a,b){
+  if(a===MERGE_MISSING||b===MERGE_MISSING)return a===b;
+  if(a===b)return true;
+  try{return JSON.stringify(a)===JSON.stringify(b)}
+  catch{return false}
+}
+
+function statesEquivalentForSync(a,b){
+  const left=cloneJSON(a||{});
+  const right=cloneJSON(b||{});
+  if(left&&typeof left==="object"){
+    delete left.updatedAt;
+    delete left.version;
+  }
+  if(right&&typeof right==="object"){
+    delete right.updatedAt;
+    delete right.version;
+  }
+  return valuesEqual(left,right);
+}
+
+function arrayHasStableIds(value){
+  return Array.isArray(value)
+    && value.every(item=>isPlainObject(item)&&String(item.id||"").trim());
+}
+
+function getMergePreference(localState,remoteState){
+  const localTs=getStateTimestamp(localState);
+  const remoteTs=getStateTimestamp(remoteState);
+  if(localTs&&remoteTs&&localTs!==remoteTs)return localTs>=remoteTs?"local":"remote";
+  return "local";
+}
+
+function mergeArrayById(base,local,remote,path,stats,prefer){
+  const b=Array.isArray(base)?base:[];
+  const l=Array.isArray(local)?local:[];
+  const r=Array.isArray(remote)?remote:[];
+  const bm=new Map(b.map(item=>[String(item.id),item]));
+  const lm=new Map(l.map(item=>[String(item.id),item]));
+  const rm=new Map(r.map(item=>[String(item.id),item]));
+
+  const order=[];
+  for(const item of l)if(!order.includes(String(item.id)))order.push(String(item.id));
+  for(const item of r)if(!order.includes(String(item.id)))order.push(String(item.id));
+  for(const item of b)if(!order.includes(String(item.id)))order.push(String(item.id));
+
+  const merged=[];
+  for(const id of order){
+    const next=threeWayMergeValue(
+      bm.has(id)?bm.get(id):MERGE_MISSING,
+      lm.has(id)?lm.get(id):MERGE_MISSING,
+      rm.has(id)?rm.get(id):MERGE_MISSING,
+      [...path,id],
+      stats,
+      prefer
+    );
+    if(next!==MERGE_MISSING)merged.push(next);
+  }
+  return merged;
+}
+
+function threeWayMergeValue(base,local,remote,path=[],stats={conflicts:0},prefer="local"){
+  if(valuesEqual(local,base))return remote===MERGE_MISSING?MERGE_MISSING:cloneJSON(remote);
+  if(valuesEqual(remote,base))return local===MERGE_MISSING?MERGE_MISSING:cloneJSON(local);
+  if(valuesEqual(local,remote))return local===MERGE_MISSING?MERGE_MISSING:cloneJSON(local);
+
+  const rootKey=path[0]||"";
+  if(path.length===1&&rootKey==="version")return APP_VERSION;
+  if(path.length===1&&rootKey==="updatedAt"){
+    const localTs=local===MERGE_MISSING?0:Date.parse(String(local||""));
+    const remoteTs=remote===MERGE_MISSING?0:Date.parse(String(remote||""));
+    return (Number.isFinite(localTs)?localTs:0)>=(Number.isFinite(remoteTs)?remoteTs:0)
+      ? (local===MERGE_MISSING?MERGE_MISSING:cloneJSON(local))
+      : (remote===MERGE_MISSING?MERGE_MISSING:cloneJSON(remote));
+  }
+
+  const allObjects=[base,local,remote].every(value=>value===MERGE_MISSING||isPlainObject(value));
+  if(allObjects){
+    const keys=new Set();
+    for(const source of [base,local,remote]){
+      if(source!==MERGE_MISSING&&isPlainObject(source)){
+        Object.keys(source).forEach(key=>keys.add(key));
+      }
+    }
+    const out={};
+    for(const key of keys){
+      const next=threeWayMergeValue(
+        base!==MERGE_MISSING&&Object.prototype.hasOwnProperty.call(base,key)?base[key]:MERGE_MISSING,
+        local!==MERGE_MISSING&&Object.prototype.hasOwnProperty.call(local,key)?local[key]:MERGE_MISSING,
+        remote!==MERGE_MISSING&&Object.prototype.hasOwnProperty.call(remote,key)?remote[key]:MERGE_MISSING,
+        [...path,key],
+        stats,
+        prefer
+      );
+      if(next!==MERGE_MISSING)out[key]=next;
+    }
+    return out;
+  }
+
+  const arrayCandidate=[base,local,remote].filter(value=>value!==MERGE_MISSING);
+  if(arrayCandidate.length&&arrayCandidate.every(Array.isArray)){
+    const canMergeById=arrayCandidate.every(arr=>arr.length===0||arrayHasStableIds(arr));
+    if(canMergeById){
+      return mergeArrayById(
+        base===MERGE_MISSING?[]:base,
+        local===MERGE_MISSING?[]:local,
+        remote===MERGE_MISSING?[]:remote,
+        path,
+        stats,
+        prefer
+      );
+    }
+  }
+
+  stats.conflicts++;
+  if(local===MERGE_MISSING&&remote!==MERGE_MISSING)return cloneJSON(remote);
+  if(remote===MERGE_MISSING&&local!==MERGE_MISSING)return cloneJSON(local);
+  return prefer==="remote"?cloneJSON(remote):cloneJSON(local);
+}
+
+function mergeStatesForSync(baseState,localState,remoteState){
+  const base=normalizeState(baseState||getDefaultState());
+  const local=normalizeState(localState||getDefaultState());
+  const remote=normalizeState(remoteState||getDefaultState());
+  const stats={conflicts:0};
+  const prefer=getMergePreference(local,remote);
+  const merged=threeWayMergeValue(base,local,remote,[],stats,prefer);
+  const normalized=normalizeState(merged);
+  normalized.version=APP_VERSION;
+  normalized.updatedAt=new Date().toISOString();
+  return {state:normalized,conflicts:stats.conflicts};
+}
+
+function getCloudMetaStorageKey(userId=authUser?.id){
+  return userId?`${CLOUD_META_STORAGE_PREFIX}.${userId}`:null;
+}
+
+function loadCloudSyncMeta(userId=authUser?.id){
+  const key=getCloudMetaStorageKey(userId);
+  if(!key)return null;
+  try{
+    const raw=localStorage.getItem(key);
+    if(!raw)return null;
+    const parsed=JSON.parse(raw);
+    const revision=Number(parsed?.revision);
+    if(!Number.isFinite(revision)||revision<0)return null;
+    return {
+      revision,
+      state:parsed?.state?normalizeState(parsed.state):null,
+      updatedAt:parsed?.updatedAt||null
+    };
+  }catch(error){
+    console.warn("No se pudo leer la base local de sincronización.",error);
+    return null;
+  }
+}
+
+function persistCloudSyncMeta(userId=authUser?.id){
+  const key=getCloudMetaStorageKey(userId);
+  if(!key||cloudRevision===null||!cloudBaseState)return;
+  try{
+    localStorage.setItem(key,JSON.stringify({
+      revision:Number(cloudRevision)||0,
+      state:cloudBaseState,
+      updatedAt:cloudLastSyncedAt||cloudBaseState.updatedAt||null
+    }));
+  }catch(error){
+    console.warn("No se pudo guardar la base local de sincronización.",error);
+  }
+}
+
+function setCloudBaseline(snapshot,revision,updatedAt,userId=authUser?.id){
+  cloudRevision=Number.isFinite(Number(revision))?Number(revision):0;
+  cloudBaseState=snapshot?normalizeState(cloneJSON(snapshot)):null;
+  cloudLastSyncedAt=updatedAt||cloudBaseState?.updatedAt||cloudLastSyncedAt||null;
+  if(cloudBaseState)persistCloudSyncMeta(userId);
+}
+
 async function fetchCloudStateRow(userId=authUser?.id){
   if(!supabase||!userId)return null;
   const {data,error}=await supabase
     .from(CLOUD_STATE_TABLE)
-    .select("state,schema_version,created_at,updated_at")
+    .select("state,schema_version,created_at,updated_at,revision")
     .eq("user_id",userId)
     .maybeSingle();
   if(error)throw error;
@@ -219,31 +415,74 @@ async function reconcileInitialStateWithCloud(){
     return {nextState:localState,needsCloudPush:false,source:"local"};
   }
 
+  const storedMeta=loadCloudSyncMeta(authUser.id);
+  if(storedMeta){
+    cloudRevision=storedMeta.revision;
+    cloudBaseState=storedMeta.state;
+    cloudLastSyncedAt=storedMeta.updatedAt||storedMeta.state?.updatedAt||null;
+  }
+
   try{
     const row=await fetchCloudStateRow(authUser.id);
     cloudLastError=null;
 
     if(!row?.state){
+      cloudRevision=0;
+      cloudBaseState=null;
+      cloudLastSyncedAt=null;
       return {nextState:localState,needsCloudPush:true,source:"local-first-cloud"};
     }
 
     const cloudState=normalizeState(row.state);
     if(!cloudState.updatedAt&&row.updated_at)cloudState.updatedAt=row.updated_at;
+    const remoteRevision=Number(row.revision)||0;
 
-    const localTimestamp=getStateTimestamp(localState);
-    const cloudTimestamp=Math.max(
-      getStateTimestamp(cloudState),
-      Number.isFinite(Date.parse(row.updated_at||""))?Date.parse(row.updated_at):0
-    );
+    let nextState=cloudState;
+    let needsCloudPush=false;
+    let source="cloud";
 
-    if(localExists&&localTimestamp>cloudTimestamp+1000){
-      return {nextState:localState,needsCloudPush:true,source:"local-newer"};
+    if(localExists){
+      const base=storedMeta?.state||null;
+
+      if(base){
+        if(valuesEqual(localState,base)){
+          nextState=cloudState;
+          source="cloud-newer";
+        }else if(valuesEqual(cloudState,base)){
+          nextState=localState;
+          needsCloudPush=true;
+          source="local-newer";
+        }else{
+          const merged=mergeStatesForSync(base,localState,cloudState);
+          nextState=merged.state;
+          needsCloudPush=!statesEquivalentForSync(nextState,cloudState);
+          source="merged";
+          cloudConflictCount++;
+          cloudLastConflictAt=new Date().toISOString();
+        }
+      }else{
+        const localTimestamp=getStateTimestamp(localState);
+        const cloudTimestamp=Math.max(
+          getStateTimestamp(cloudState),
+          Number.isFinite(Date.parse(row.updated_at||""))?Date.parse(row.updated_at):0
+        );
+
+        if(localTimestamp>cloudTimestamp+1000){
+          nextState=localState;
+          needsCloudPush=true;
+          source="local-newer-no-base";
+        }
+      }
     }
 
-    writeStateToLocal(cloudState,authUser.id);
-    cloudLastSyncedAt=row.updated_at||cloudState.updatedAt||null;
+    setCloudBaseline(cloudState,remoteRevision,row.updated_at||cloudState.updatedAt,authUser.id);
+
+    if(!needsCloudPush){
+      writeStateToLocal(nextState,authUser.id);
+    }
+
     renderCloudSyncStatus();
-    return {nextState:cloudState,needsCloudPush:false,source:"cloud"};
+    return {nextState,needsCloudPush,source};
   }catch(error){
     cloudLastError=error;
     renderCloudSyncStatus();
@@ -261,6 +500,115 @@ function scheduleCloudStateSave(delay=CLOUD_SYNC_DEBOUNCE_MS){
     cloudSyncTimer=null;
     void flushCloudStateSave();
   },Math.max(0,Number(delay)||0));
+}
+
+async function ensureCloudBaselineBeforeSave(){
+  if(cloudRevision!==null&&cloudBaseState)return true;
+  if(!supabase||!authUser?.id)return false;
+
+  const row=await fetchCloudStateRow(authUser.id);
+  if(!row?.state){
+    cloudRevision=0;
+    cloudBaseState=null;
+    cloudLastSyncedAt=null;
+    return true;
+  }
+
+  const remoteState=normalizeState(row.state);
+  if(!remoteState.updatedAt&&row.updated_at)remoteState.updatedAt=row.updated_at;
+  const localNow=normalizeState(cloneJSON(state));
+  const previousMeta=loadCloudSyncMeta(authUser.id);
+  setCloudBaseline(remoteState,Number(row.revision)||0,row.updated_at||remoteState.updatedAt,authUser.id);
+
+  if(!valuesEqual(localNow,remoteState)){
+    if(previousMeta?.state){
+      const merged=mergeStatesForSync(previousMeta.state,localNow,remoteState);
+      state=merged.state;
+      writeStateToLocal();
+    }else{
+      const localTs=getStateTimestamp(localNow);
+      const remoteTs=Math.max(
+        getStateTimestamp(remoteState),
+        Number.isFinite(Date.parse(row.updated_at||""))?Date.parse(row.updated_at):0
+      );
+      if(remoteTs>localTs){
+        state=remoteState;
+        writeStateToLocal();
+      }
+    }
+  }
+  return true;
+}
+
+async function performRevisionedCloudSave(){
+  await ensureCloudBaselineBeforeSave();
+
+  for(let attempt=0;attempt<CLOUD_SYNC_MAX_RETRIES;attempt++){
+    const userId=authUser?.id;
+    if(!userId)throw new Error("La sesión terminó antes de completar la sincronización.");
+
+    const snapshot=normalizeState(cloneJSON(state));
+    snapshot.version=APP_VERSION;
+    snapshot.updatedAt=snapshot.updatedAt||new Date().toISOString();
+
+    const expectedRevision=cloudRevision===null?0:Number(cloudRevision)||0;
+
+    const {data,error}=await supabase.rpc("boards_sync_state",{
+      p_expected_revision:expectedRevision,
+      p_state:snapshot,
+      p_schema_version:CLOUD_STATE_SCHEMA_VERSION
+    });
+
+    if(error)throw error;
+
+    const result=Array.isArray(data)?data[0]:data;
+    if(!result)throw new Error("Supabase no devolvió el resultado de sincronización.");
+
+    const remoteRevision=Number(result.revision)||0;
+    const remoteUpdatedAt=result.updated_at||null;
+
+    if(result.applied===true){
+      setCloudBaseline(snapshot,remoteRevision,remoteUpdatedAt||snapshot.updatedAt,userId);
+      cloudLastError=null;
+      return true;
+    }
+
+    const remoteState=result.state?normalizeState(result.state):null;
+    if(!remoteState){
+      cloudRevision=remoteRevision;
+      cloudBaseState=null;
+      continue;
+    }
+    if(!remoteState.updatedAt&&remoteUpdatedAt)remoteState.updatedAt=remoteUpdatedAt;
+
+    const base=cloudBaseState?normalizeState(cloudBaseState):remoteState;
+    const localNow=normalizeState(cloneJSON(state));
+    const merged=mergeStatesForSync(base,localNow,remoteState);
+
+    cloudConflictCount++;
+    cloudLastConflictAt=new Date().toISOString();
+    setCloudBaseline(remoteState,remoteRevision,remoteUpdatedAt||remoteState.updatedAt,userId);
+
+    if(statesEquivalentForSync(merged.state,remoteState)){
+      state=remoteState;
+      writeStateToLocal();
+      cloudLastError=null;
+      renderAll();
+      showToast("Cambios de otro dispositivo recuperados.");
+      return true;
+    }
+
+    state=merged.state;
+    writeStateToLocal();
+
+    if(attempt===0){
+      showToast(merged.conflicts
+        ? "Cambios simultáneos detectados. BOARDS los está combinando de forma segura."
+        : "Cambios de otro dispositivo detectados. Sincronizando…");
+    }
+  }
+
+  throw new Error("No se pudo estabilizar la sincronización después de varios intentos. Tu copia local sigue segura.");
 }
 
 async function flushCloudStateSave(){
@@ -281,30 +629,13 @@ async function flushCloudStateSave(){
   cloudSyncQueued=false;
   renderCloudSyncStatus();
   const userId=authUser.id;
-  const snapshot=JSON.parse(JSON.stringify(state));
-  const updatedAt=snapshot.updatedAt||new Date().toISOString();
-  snapshot.updatedAt=updatedAt;
-  snapshot.version="0.6B.1";
 
-  cloudSyncInFlight=(async()=>{
-    const {error}=await supabase
-      .from(CLOUD_STATE_TABLE)
-      .upsert({
-        user_id:userId,
-        state:snapshot,
-        schema_version:CLOUD_STATE_SCHEMA_VERSION,
-        updated_at:updatedAt
-      },{onConflict:"user_id"});
-
-    if(error)throw error;
-    cloudLastSyncedAt=updatedAt;
-    cloudLastError=null;
-    renderCloudSyncStatus();
-    return true;
-  })();
+  cloudSyncInFlight=performRevisionedCloudSave();
 
   try{
     await cloudSyncInFlight;
+    cloudLastError=null;
+    renderCloudSyncStatus();
     return true;
   }catch(error){
     cloudLastError=error;
@@ -390,7 +721,7 @@ function getPendingPastStudyDays(){const s=getStudySchedule();if(!s)return [];co
 function setActiveStudyDate(localDate){if(!parseLocalDate(localDate))return;editingSessionId=null;activeStudyDateKey=localDate;renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 function returnToToday(){editingSessionId=null;activeStudyDateKey=todayKey();renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 
-/* ======================== AUTH · V0.6B.1 ======================== */
+/* ======================== AUTH · V0.6C ======================== */
 
 function getAuthDisplayName(user=authUser){
   if(!user)return "";
@@ -724,7 +1055,8 @@ function getCloudSyncView(){
   }
   if(cloudSyncReady&&cloudLastSyncedAt){
     const when=formatCloudSyncTimestamp(cloudLastSyncedAt);
-    return {state:"synced",badge:"☁ Sincronizado",status:"Sincronizado",detail:when?`Última copia: ${when}`:"Tu progreso está respaldado en Supabase."};
+    const conflictNote=cloudConflictCount>0?" · cambios simultáneos combinados de forma segura":"";
+    return {state:"synced",badge:"☁ Sincronizado",status:"Sincronizado",detail:when?`Última copia: ${when}${conflictNote}`:`Tu progreso está respaldado en Supabase${conflictNote}.`};
   }
   if(cloudSyncReady){
     return {state:"ready",badge:"☁ Nube activa",status:"Nube activa",detail:"La sincronización está preparada para esta cuenta."};
@@ -769,6 +1101,10 @@ async function activateAuthenticatedSession(session,{force=false}={}){
   if(changedUser||force||!appSessionReady){
     cloudSyncReady=false;
     cloudSyncQueued=false;
+    cloudRevision=null;
+    cloudBaseState=null;
+    cloudConflictCount=0;
+    cloudLastConflictAt=null;
     if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
 
     const reconciliation=await reconcileInitialStateWithCloud();
@@ -828,6 +1164,10 @@ async function handleAuthStateChange(event,session){
     cloudSyncQueued=false;
     cloudLastSyncedAt=null;
     cloudLastError=null;
+    cloudRevision=null;
+    cloudBaseState=null;
+    cloudConflictCount=0;
+    cloudLastConflictAt=null;
     if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
     state=getDefaultState();
     showAuthGate("login");
@@ -1049,7 +1389,7 @@ function importData(e){const file=e.target.files?.[0];if(!file)return;const r=ne
 function resetData(){if(!window.confirm("¿Eliminar todo tu progreso de BOARDS? Este cambio también se sincronizará con la nube."))return;state=getDefaultState();activeStudyDateKey=todayKey();aiContextDateKey=todayKey();editingSessionId=null;aiCurrentAnalysis=null;aiQuizRuntime=null;clearAIImage(false);saveState();applyTheme();renderAll();navigateTo("dashboard");showToast("Datos reiniciados.")}
 function showToast(message){const t=document.getElementById("toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2600)}
 
-/* ======================== BOARDS AI V0.6B.1 ======================== */
+/* ======================== BOARDS AI V0.6C ======================== */
 function initAIControls(){
   document.querySelectorAll("[data-ai-input-mode]").forEach(b=>b.addEventListener("click",()=>setAIInputMode(b.dataset.aiInputMode)));
   const input=document.getElementById("aiImageInput"),drop=document.getElementById("aiDropzone");
