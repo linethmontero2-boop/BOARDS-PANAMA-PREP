@@ -22,7 +22,7 @@ const CLOUD_STATE_SCHEMA_VERSION = 1;
 const CLOUD_SYNC_DEBOUNCE_MS = 750;
 const CLOUD_SYNC_MAX_RETRIES = 4;
 const CLOUD_META_STORAGE_PREFIX = `${STORAGE_KEY}.cloudMeta.v1`;
-const APP_VERSION = "0.6C";
+const APP_VERSION = "0.7B";
 
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
@@ -90,7 +90,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.6C"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.7B"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -116,6 +116,10 @@ let cloudLastConflictAt = null;
 let state = getDefaultState();
 let toastTimer = null, draggedModuleId = null, activeStudyDateKey = todayKey(), editingSessionId = null;
 let aiInputMode = "image", aiImageFile = null, aiImagePreviewUrl = "", aiContextDateKey = todayKey(), aiLinkedSessionId = "", aiSelectedSystem = "", aiCurrentAnalysis = null, aiQuizRuntime = null, aiBusy = false;
+let aiQuotaStatus = null, aiQuotaBusy = false, aiQuotaLastFetchedAt = 0, aiQuotaLastError = null;
+let aiQuotaCooldownUntil = 0, aiQuotaCooldownTimer = null;
+const AI_QUOTA_REFRESH_MS = 45_000;
+const AI_MODEL_LABEL = "gpt-6.1-sol";
 
 function getDefaultState(){return {version:APP_VERSION,updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
 function normalizeUsage(usage){
@@ -198,7 +202,7 @@ function loadStateForCurrentUser(){
   return fallback;
 }
 
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C"].includes(String(raw.version||""))};}
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C","0.7A","0.7B"].includes(String(raw.version||""))};}
 
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
 
@@ -721,7 +725,7 @@ function getPendingPastStudyDays(){const s=getStudySchedule();if(!s)return [];co
 function setActiveStudyDate(localDate){if(!parseLocalDate(localDate))return;editingSessionId=null;activeStudyDateKey=localDate;renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 function returnToToday(){editingSessionId=null;activeStudyDateKey=todayKey();renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 
-/* ======================== AUTH · V0.6C ======================== */
+/* ======================== AUTH · V0.7B ======================== */
 
 function getAuthDisplayName(user=authUser){
   if(!user)return "";
@@ -1105,6 +1109,11 @@ async function activateAuthenticatedSession(session,{force=false}={}){
     cloudBaseState=null;
     cloudConflictCount=0;
     cloudLastConflictAt=null;
+    aiQuotaStatus=null;
+    aiQuotaLastFetchedAt=0;
+    aiQuotaLastError=null;
+    aiQuotaCooldownUntil=0;
+    stopAIQuotaCooldownTimer();
     if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
 
     const reconciliation=await reconcileInitialStateWithCloud();
@@ -1168,6 +1177,11 @@ async function handleAuthStateChange(event,session){
     cloudBaseState=null;
     cloudConflictCount=0;
     cloudLastConflictAt=null;
+    aiQuotaStatus=null;
+    aiQuotaLastFetchedAt=0;
+    aiQuotaLastError=null;
+    aiQuotaCooldownUntil=0;
+    stopAIQuotaCooldownTimer();
     if(cloudSyncTimer){window.clearTimeout(cloudSyncTimer);cloudSyncTimer=null}
     state=getDefaultState();
     showAuthGate("login");
@@ -1206,6 +1220,7 @@ function initializeCoreAppOnce(){
   initSessionEditControls();
   initAIControls();
   populateStaticSelects();
+  refreshStaticVersionLabels();
   document.addEventListener("visibilitychange",()=>{
     if(document.visibilityState==="hidden"&&cloudSyncReady)void flushCloudStateSave();
   });
@@ -1219,6 +1234,7 @@ function initializeCoreAppOnce(){
     cloudLastError=null;
     renderCloudSyncStatus();
     if(cloudSyncReady)scheduleCloudStateSave(0);
+    if(state.currentPage==="ai")void refreshAIQuotaStatus({force:true});
   });
   coreAppInitialized=true;
 }
@@ -1272,9 +1288,19 @@ function openSidebar(){document.getElementById("sidebar")?.classList.add("open")
 function closeSidebar(){document.getElementById("sidebar")?.classList.remove("open");document.getElementById("sidebarOverlay")?.classList.remove("open")}
 function initThemeToggle(){document.getElementById("themeToggle")?.addEventListener("click",()=>{state.theme=state.theme==="dark"?"light":"dark";applyTheme();saveState()})}
 function applyTheme(){document.body.classList.toggle("dark",state.theme==="dark");const t=document.getElementById("themeToggle");if(t)t.textContent=state.theme==="dark"?"☀":"☾"}
+function refreshStaticVersionLabels(){
+  if(typeof document==="undefined"||!document.body)return;
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  const targets=[];
+  while(walker.nextNode()){
+    const node=walker.currentNode;
+    if(node.nodeValue?.includes("V0.6C"))targets.push(node);
+  }
+  targets.forEach(node=>{node.nodeValue=node.nodeValue.replaceAll("V0.6C",`V${APP_VERSION}`)});
+}
 function populateStaticSelects(){fillSelect("errorSystem",SYSTEMS);fillSelect("errorSystemFilter",SYSTEMS,true);fillSelect("errorPopulation",POPULATION_CONTEXTS);fillSelect("errorPopulationFilter",POPULATION_CONTEXTS,true);fillSelect("errorType",ERROR_TYPES);fillSelect("errorTypeFilter",ERROR_TYPES,true)}
 function fillSelect(id,values,all=false){const el=document.getElementById(id);if(!el)return;el.innerHTML=(all?'<option value="all">Todos</option>':"")+values.map(v=>`<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("")}
-function renderAll(){renderProfile();renderDashboard();renderToday();renderPlanner();renderPrebank();renderAIPage();renderErrors();renderPerformance();renderSettings();renderSidebar()}
+function renderAll(){renderProfile();renderDashboard();renderToday();renderPlanner();renderPrebank();renderAIPage();renderErrors();renderPerformance();renderSettings();renderSidebar();refreshStaticVersionLabels()}
 function renderProfile(){
   const name=String(state.profile?.name||"").trim()||getAuthDisplayName(authUser)||"Estudiante";
   const nameEl=document.getElementById("profileName");
@@ -1389,7 +1415,7 @@ function importData(e){const file=e.target.files?.[0];if(!file)return;const r=ne
 function resetData(){if(!window.confirm("¿Eliminar todo tu progreso de BOARDS? Este cambio también se sincronizará con la nube."))return;state=getDefaultState();activeStudyDateKey=todayKey();aiContextDateKey=todayKey();editingSessionId=null;aiCurrentAnalysis=null;aiQuizRuntime=null;clearAIImage(false);saveState();applyTheme();renderAll();navigateTo("dashboard");showToast("Datos reiniciados.")}
 function showToast(message){const t=document.getElementById("toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),2600)}
 
-/* ======================== BOARDS AI V0.6C ======================== */
+/* ======================== BOARDS AI V0.7B ======================== */
 function initAIControls(){
   document.querySelectorAll("[data-ai-input-mode]").forEach(b=>b.addEventListener("click",()=>setAIInputMode(b.dataset.aiInputMode)));
   const input=document.getElementById("aiImageInput"),drop=document.getElementById("aiDropzone");
@@ -1428,8 +1454,283 @@ function setAIImageFile(file){
 function clearAIImage(render=true){if(aiImagePreviewUrl)URL.revokeObjectURL(aiImagePreviewUrl);aiImagePreviewUrl="";aiImageFile=null;if(render)renderAIImagePreview()}
 function renderAIImagePreview(){const preview=document.getElementById("aiImagePreview"),empty=document.getElementById("aiDropzoneEmpty"),img=document.getElementById("aiPreviewImage");if(!preview||!empty||!img)return;if(aiImageFile&&aiImagePreviewUrl){empty.hidden=true;preview.hidden=false;img.src=aiImagePreviewUrl;document.getElementById("aiPreviewName").textContent=aiImageFile.name||"captura pegada";document.getElementById("aiPreviewSize").textContent=`${(aiImageFile.size/1024/1024).toFixed(2)} MB`}else{empty.hidden=false;preview.hidden=true;img.removeAttribute("src")}}
 function getAIContext(){const d=parseLocalDate(aiContextDateKey)||normalizeDate(new Date()),ctx=getOperationalContext(d);return {...ctx,localDate:dateKey(d)}}
-function renderAIPage(){setAIInputMode(aiInputMode);renderAIImagePreview();renderAIContext();renderAIUsageMeter();renderAIRecent();renderAIResult()}
+function renderAIPage(){
+  setAIInputMode(aiInputMode);
+  renderAIImagePreview();
+  renderAIContext();
+  renderAIUsageMeter();
+  renderAIRecent();
+  renderAIResult();
+  updateAIAnalyzeButtonState();
+  const aiPageActive=document.getElementById("page-ai")?.classList.contains("active");
+  if(aiPageActive&&authSession?.access_token&&Date.now()-aiQuotaLastFetchedAt>AI_QUOTA_REFRESH_MS){
+    void refreshAIQuotaStatus();
+  }
+}
 function renderAIContext(){const ctx=getAIContext(),c=document.getElementById("aiContextSummary"),systemSelect=document.getElementById("aiSystemSelect"),blockSelect=document.getElementById("aiBlockSelect");if(!c||!systemSelect||!blockSelect)return;const m=getModule(ctx.moduleId),dayText=ctx.isStudyDay?`Día ${(ctx.moduleDayIndex??ctx.dayIndex)+1} de ${ctx.moduleTotalDays??ctx.totalDays}`:ctx.type==="rest"?"Día de descanso":"Sin jornada activa";c.className="ai-context-summary";c.innerHTML=`<div class="ai-context-stat"><span>FECHA</span><strong>${formatShortDate(ctx.date)}</strong></div><div class="ai-context-stat"><span>FASE</span><strong>${escapeHTML(ctx.phaseLabel||ctx.block?.phaseLabel||"Plan adaptativo")}</strong></div><div class="ai-context-stat full"><span>MÓDULO</span><strong>${escapeHTML(m.shortTitle)} · ${escapeHTML(dayText)}</strong></div>`;const allowed=getAllowedSystemsForModule(ctx.moduleId);systemSelect.innerHTML=allowed.map(s=>`<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join("");const linked=state.bankSessions.find(s=>s.id===aiLinkedSessionId);let preferred=aiSelectedSystem;if(linked&&Number(linked.moduleId)===Number(ctx.moduleId)&&allowed.includes(linked.system))preferred=linked.system;if(!allowed.includes(preferred))preferred=allowed[0]||"";aiSelectedSystem=preferred;systemSelect.value=preferred;systemSelect.disabled=allowed.length===1;const sessions=getSessionsForDate(ctx.localDate,ctx.moduleId);blockSelect.innerHTML='<option value="">No vincular</option>'+sessions.map(s=>{const acc=s.questions?Math.round(s.correct/s.questions*100):0,errors=Math.max(s.questions-s.correct,0);return `<option value="${s.id}">${s.questions} preguntas · ${acc}% · ${errors} error${errors===1?"":"es"}</option>`}).join("");if(sessions.some(s=>s.id===aiLinkedSessionId))blockSelect.value=aiLinkedSessionId;else{aiLinkedSessionId="";blockSelect.value=""}}
+
+function firstFiniteNumber(...values){
+  for(const value of values){
+    if(value===null||value===undefined||value==="")continue;
+    const n=Number(value);
+    if(Number.isFinite(n))return n;
+  }
+  return null;
+}
+
+function normalizeAIQuotaPayload(payload){
+  const source=payload?.quota||payload?.data?.quota||payload?.usageQuota||payload?.usage_quota||payload||{};
+  const limitRaw=firstFiniteNumber(
+    source.limit,
+    source.dailyLimit,
+    source.daily_limit,
+    payload?.dailyLimit,
+    payload?.daily_limit
+  );
+  const usedRaw=firstFiniteNumber(
+    source.used,
+    source.usedToday,
+    source.used_today,
+    payload?.used,
+    payload?.usedToday,
+    payload?.used_today
+  );
+  const remainingRaw=firstFiniteNumber(
+    source.remaining,
+    source.remainingToday,
+    source.remaining_today,
+    payload?.remaining,
+    payload?.remainingToday,
+    payload?.remaining_today
+  );
+  const limit=Math.max(1,Math.round(limitRaw??20));
+  const used=Math.max(0,Math.round(usedRaw??Math.max(0,limit-(remainingRaw??limit))));
+  const remaining=Math.max(0,Math.min(limit,Math.round(remainingRaw??(limit-used))));
+  const retryAfterSeconds=Math.max(0,Math.ceil(firstFiniteNumber(
+    source.retryAfterSeconds,
+    source.retry_after_seconds,
+    payload?.retryAfterSeconds,
+    payload?.retry_after_seconds
+  )??0));
+  const cooldownSeconds=Math.max(0,Math.ceil(firstFiniteNumber(
+    source.cooldownSeconds,
+    source.cooldown_seconds,
+    payload?.cooldownSeconds,
+    payload?.cooldown_seconds
+  )??0));
+  return {
+    limit,
+    used,
+    remaining,
+    retryAfterSeconds,
+    cooldownSeconds,
+    resetAt:source.resetAt||source.reset_at||payload?.resetAt||payload?.reset_at||null,
+    lastRequestAt:source.lastRequestAt||source.last_request_at||payload?.lastRequestAt||payload?.last_request_at||null,
+    updatedAt:source.updatedAt||source.updated_at||payload?.updatedAt||payload?.updated_at||null,
+    reason:source.reason||payload?.reason||null,
+    message:source.message||payload?.message||null,
+    model:source.model||payload?.model||AI_MODEL_LABEL
+  };
+}
+
+function hasAIQuotaPayload(payload){
+  const source=payload?.quota||payload?.data?.quota||payload?.usageQuota||payload?.usage_quota||payload;
+  if(!source||typeof source!=="object")return false;
+  return [
+    "limit","dailyLimit","daily_limit","used","usedToday","used_today",
+    "remaining","remainingToday","remaining_today","retryAfterSeconds",
+    "retry_after_seconds","cooldownSeconds","cooldown_seconds","resetAt","reset_at"
+  ].some(key=>Object.prototype.hasOwnProperty.call(source,key));
+}
+
+function stopAIQuotaCooldownTimer(){
+  if(aiQuotaCooldownTimer){
+    window.clearInterval(aiQuotaCooldownTimer);
+    aiQuotaCooldownTimer=null;
+  }
+}
+
+function getAIQuotaRetrySeconds(){
+  if(aiQuotaCooldownUntil>0){
+    return Math.max(0,Math.ceil((aiQuotaCooldownUntil-Date.now())/1000));
+  }
+  return Math.max(0,Math.ceil(Number(aiQuotaStatus?.retryAfterSeconds)||0));
+}
+
+function startAIQuotaCooldownTimer(){
+  stopAIQuotaCooldownTimer();
+  if(!aiQuotaCooldownUntil||aiQuotaCooldownUntil<=Date.now())return;
+  aiQuotaCooldownTimer=window.setInterval(()=>{
+    const remaining=getAIQuotaRetrySeconds();
+    if(aiQuotaStatus)aiQuotaStatus={...aiQuotaStatus,retryAfterSeconds:remaining};
+    renderAIUsageMeter();
+    updateAIAnalyzeButtonState();
+    if(remaining<=0){
+      aiQuotaCooldownUntil=0;
+      stopAIQuotaCooldownTimer();
+      void refreshAIQuotaStatus({force:true});
+    }
+  },1000);
+}
+
+function setAIQuotaStatus(payload){
+  const next=normalizeAIQuotaPayload(payload);
+  aiQuotaStatus=next;
+  aiQuotaLastFetchedAt=Date.now();
+  aiQuotaLastError=null;
+  if(next.retryAfterSeconds>0){
+    aiQuotaCooldownUntil=Date.now()+next.retryAfterSeconds*1000;
+    startAIQuotaCooldownTimer();
+  }else{
+    aiQuotaCooldownUntil=0;
+    stopAIQuotaCooldownTimer();
+  }
+  renderAIUsageMeter();
+  updateAIAnalyzeButtonState();
+}
+
+async function getAIAccessToken({refresh=false}={}){
+  if(refresh&&supabase){
+    const {data,error}=await supabase.auth.refreshSession();
+    if(error)throw error;
+    if(data?.session){
+      authSession=data.session;
+      authUser=data.session.user;
+    }
+  }
+  return String(authSession?.access_token||"");
+}
+
+async function fetchBoardsAI({method="GET",body=null,signal=null,retryAuth=true}={}){
+  const requestMethod=String(method||"GET").toUpperCase();
+  const bodyText=body===null||body===undefined?null:(typeof body==="string"?body:JSON.stringify(body));
+
+  const send=async token=>{
+    const headers={};
+    if(bodyText!==null)headers["Content-Type"]="application/json";
+    if(token)headers.Authorization=`Bearer ${token}`;
+    return fetch("/.netlify/functions/analyze-question",{
+      method:requestMethod,
+      headers,
+      ...(bodyText!==null?{body:bodyText}:{}),
+      ...(signal?{signal}:{})
+    });
+  };
+
+  let token=await getAIAccessToken();
+  let response=await send(token);
+
+  if(response.status===401&&retryAuth&&supabase&&authUser){
+    try{
+      token=await getAIAccessToken({refresh:true});
+      if(token)response=await send(token);
+    }catch(error){
+      console.warn("No se pudo renovar la sesión de BOARDS.",error);
+    }
+  }
+
+  return response;
+}
+
+function friendlyAIBackendMessage(status,data={}){
+  const backendMessage=String(data?.message||data?.error||"").trim();
+  if(status===401)return backendMessage||"Tu sesión de BOARDS venció. Vuelve a iniciar sesión para usar BOARDS AI.";
+  if(status===403)return backendMessage||"Tu cuenta no está autorizada para usar BOARDS AI.";
+  if(status===429){
+    if(data?.reason==="daily_limit"||data?.quota?.remaining===0){
+      return backendMessage||"Alcanzaste el cupo diario de BOARDS AI. Podrás volver a usarlo cuando se reinicie el contador.";
+    }
+    return backendMessage||"BOARDS AI está en pausa unos segundos para proteger tu cupo. Inténtalo nuevamente cuando termine el cooldown.";
+  }
+  if(status>=500)return backendMessage||"BOARDS AI tuvo un problema temporal en el servidor. Tu progreso está seguro; inténtalo nuevamente.";
+  return backendMessage||`El backend respondió ${status}.`;
+}
+
+function formatAIQuotaReset(value){
+  if(!value)return "";
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return "";
+  return new Intl.DateTimeFormat("es-PA",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(d);
+}
+
+function updateAIAnalyzeButtonState(){
+  const button=document.getElementById("aiAnalyzeButton");
+  if(!button)return;
+
+  if(aiBusy){
+    button.disabled=true;
+    button.textContent="Analizando con BOARDS AI…";
+    button.setAttribute("aria-busy","true");
+    return;
+  }
+
+  button.removeAttribute("aria-busy");
+
+  if(!authSession?.access_token){
+    button.disabled=true;
+    button.textContent="Inicia sesión para usar BOARDS AI";
+    return;
+  }
+
+  const remaining=Number(aiQuotaStatus?.remaining);
+  if(Number.isFinite(remaining)&&remaining<=0){
+    button.disabled=true;
+    button.textContent="Cupo diario agotado";
+    return;
+  }
+
+  const retryAfter=getAIQuotaRetrySeconds();
+  if(retryAfter>0){
+    button.disabled=true;
+    button.textContent=`Disponible en ${retryAfter}s`;
+    return;
+  }
+
+  button.disabled=false;
+  button.textContent="Analizar con BOARDS AI";
+}
+
+async function refreshAIQuotaStatus({force=false}={}){
+  if(aiQuotaBusy)return aiQuotaStatus;
+  if(!authSession?.access_token){
+    aiQuotaLastError=new Error("Debes iniciar sesión para consultar tu cupo.");
+    renderAIUsageMeter();
+    updateAIAnalyzeButtonState();
+    return null;
+  }
+  if(typeof navigator!=="undefined"&&navigator.onLine===false){
+    aiQuotaLastError=new Error("Sin conexión.");
+    renderAIUsageMeter();
+    updateAIAnalyzeButtonState();
+    return aiQuotaStatus;
+  }
+  if(!force&&aiQuotaLastFetchedAt&&Date.now()-aiQuotaLastFetchedAt<AI_QUOTA_REFRESH_MS)return aiQuotaStatus;
+
+  aiQuotaBusy=true;
+  renderAIUsageMeter();
+
+  try{
+    const response=await fetchBoardsAI({method:"GET"});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok){
+      if(hasAIQuotaPayload(data))setAIQuotaStatus(data);
+      throw new Error(friendlyAIBackendMessage(response.status,data));
+    }
+    setAIQuotaStatus(data);
+    return aiQuotaStatus;
+  }catch(error){
+    aiQuotaLastError=error;
+    console.warn("No se pudo consultar el cupo de BOARDS AI.",error);
+    renderAIUsageMeter();
+    updateAIAnalyzeButtonState();
+    return aiQuotaStatus;
+  }finally{
+    aiQuotaBusy=false;
+    renderAIUsageMeter();
+    updateAIAnalyzeButtonState();
+  }
+}
+
 function renderAILoading(done=0,message="Analizando con BOARDS AI..."){
   const stage=document.getElementById("aiAnalysisStage");
   if(!stage)return;
@@ -1446,7 +1747,7 @@ async function runAIAnalysis(){
 
   aiBusy=true;
   const button=document.getElementById("aiAnalyzeButton");
-  if(button)button.disabled=true;
+  updateAIAnalyzeButtonState();
   aiCurrentAnalysis=null;
   aiQuizRuntime=null;
   const root=document.getElementById("aiResultRoot");
@@ -1488,10 +1789,9 @@ async function runAIAnalysis(){
     const timeout=window.setTimeout(()=>controller.abort(),95000);
     let response;
     try{
-      response=await fetch("/.netlify/functions/analyze-question",{
+      response=await fetchBoardsAI({
         method:"POST",
-        headers:{"Content-Type":"application/json",...(authSession?.access_token?{Authorization:`Bearer ${authSession.access_token}`}:{})},
-        body:JSON.stringify(payload),
+        body:payload,
         signal:controller.signal
       })
     }finally{
@@ -1499,12 +1799,20 @@ async function runAIAnalysis(){
     }
 
     const data=await response.json().catch(()=>({}));
+
+    if(hasAIQuotaPayload(data)){
+      setAIQuotaStatus(data);
+    }
+
     if(!response.ok){
-      const backendMessage=data?.message||data?.error||`El backend respondió ${response.status}.`;
       if(response.status===404&&location.hostname.includes("webcontainer.io")){
         throw new Error("La interfaz está lista, pero StackBlitz no ejecuta la función de Netlify en esta vista. Despliega el proyecto en Netlify y prueba desde la URL publicada.")
       }
-      throw new Error(backendMessage)
+      throw new Error(friendlyAIBackendMessage(response.status,data))
+    }
+
+    if(!hasAIQuotaPayload(data)){
+      void refreshAIQuotaStatus({force:true});
     }
 
     if(data.status!=="ok"||!data.analysis){
@@ -1520,14 +1828,19 @@ async function runAIAnalysis(){
     requestAnimationFrame(()=>document.getElementById("aiResultRoot")?.scrollIntoView({behavior:"smooth",block:"start"}))
   }catch(error){
     console.error(error);
-    const message=error?.name==="AbortError"?"El análisis tardó demasiado y fue cancelado. Inténtalo nuevamente.":(error?.message||"No se pudo completar el análisis.");
+    const offline=typeof navigator!=="undefined"&&navigator.onLine===false;
+    const message=offline
+      ?"No hay conexión a internet. Tu progreso local está seguro; vuelve a intentarlo cuando recuperes conexión."
+      :error?.name==="AbortError"
+        ?"El análisis tardó demasiado y fue cancelado. Inténtalo nuevamente."
+        :(error?.message||"No se pudo completar el análisis.");
     renderAIBackendError(message)
   }finally{
     window.clearInterval(loadingTimer);
     const stage=document.getElementById("aiAnalysisStage");
     if(stage&&aiCurrentAnalysis)stage.hidden=true;
     aiBusy=false;
-    if(button)button.disabled=false
+    updateAIAnalyzeButtonState();
   }
 }
 
@@ -1675,9 +1988,62 @@ function sumUsageEvents(events){
 }
 function usageEventsSince(days){const cutoff=Date.now()-days*86400000;return state.aiUsageEvents.filter(e=>new Date(e.createdAt).getTime()>=cutoff)}
 function renderAIUsageMeter(){
-  const mount=document.getElementById("aiUsageMeter");if(!mount)return;
-  const all=Array.isArray(state.aiUsageEvents)?state.aiUsageEvents:[],today=dateKey(new Date()),todayEvents=all.filter(e=>{const d=new Date(e.createdAt);return !Number.isNaN(d.getTime())&&dateKey(d)===today}),week=usageEventsSince(7),todaySum=sumUsageEvents(todayEvents),weekSum=sumUsageEvents(week),allSum=sumUsageEvents(all),last=all[0];
-  mount.innerHTML=`<div class="ai-usage-meter-head"><div><span class="panel-kicker">USO DE IA · LOCAL</span><strong>Consumo de BOARDS AI</strong><small>Seguimiento desde V0.5B.5. El costo es una estimación basada en los tokens reportados por la API.</small></div>${last?`<span class="ai-usage-model">${escapeHTML(last.model)}</span>`:""}</div><div class="ai-usage-meter-grid"><div><span>HOY</span><strong>${todaySum.requests} llamada${todaySum.requests===1?"":"s"}</strong><small>${formatTokens(todaySum.totalTokens)} tokens · ${formatUsd(todaySum.costKnown?todaySum.estimatedCostUsd:null)}</small></div><div><span>7 DÍAS</span><strong>${weekSum.requests} llamada${weekSum.requests===1?"":"s"}</strong><small>${formatTokens(weekSum.totalTokens)} tokens · ${formatUsd(weekSum.costKnown?weekSum.estimatedCostUsd:null)}</small></div><div><span>TOTAL LOCAL</span><strong>${allSum.requests} llamada${allSum.requests===1?"":"s"}</strong><small>${formatTokens(allSum.totalTokens)} tokens · ${formatUsd(allSum.costKnown?allSum.estimatedCostUsd:null)}</small></div>${last?`<div><span>ÚLTIMA</span><strong>${formatUsd(last.usage?.estimatedCostUsd)}</strong><small>${formatTokens(last.usage?.totalTokens)} tokens</small></div>`:`<div><span>ÚLTIMA</span><strong>—</strong><small>Aún sin llamadas registradas</small></div>`}</div>`
+  const mount=document.getElementById("aiUsageMeter");
+  if(!mount)return;
+
+  const all=Array.isArray(state.aiUsageEvents)?state.aiUsageEvents:[];
+  const week=usageEventsSince(7);
+  const weekSum=sumUsageEvents(week);
+  const allSum=sumUsageEvents(all);
+  const last=all[0]||null;
+  const quota=aiQuotaStatus;
+  const retryAfter=getAIQuotaRetrySeconds();
+  const modelLabel=quota?.model||AI_MODEL_LABEL;
+
+  let quotaSummary="Consulta tu cupo diario sin consumir una llamada de OpenAI.";
+  if(aiQuotaBusy&&!quota){
+    quotaSummary="Consultando tu cupo diario…";
+  }else if(quota){
+    quotaSummary=`${quota.remaining} disponible${quota.remaining===1?"":"s"} hoy · ${quota.used}/${quota.limit} utilizados.`;
+    if(retryAfter>0)quotaSummary+=` Próxima llamada disponible en ${retryAfter}s.`;
+    else if(quota.remaining<=0){
+      const reset=formatAIQuotaReset(quota.resetAt);
+      quotaSummary+=reset?` El cupo se reinicia ${reset}.`:" El contador se reiniciará automáticamente.";
+    }
+  }else if(aiQuotaLastError){
+    quotaSummary="No pude actualizar el cupo ahora mismo. El historial local de consumo sigue disponible.";
+  }
+
+  mount.innerHTML=`
+    <div class="ai-usage-meter-head">
+      <div>
+        <span class="panel-kicker">CUPO DE IA · CUENTA</span>
+        <strong>Consumo de BOARDS AI</strong>
+        <small>${escapeHTML(quotaSummary)}</small>
+      </div>
+      <span class="ai-usage-model">${escapeHTML(modelLabel)}</span>
+    </div>
+    <div class="ai-usage-meter-grid">
+      <div>
+        <span>DISPONIBLES HOY</span>
+        <strong>${quota?quota.remaining:"—"}</strong>
+        <small>${quota?`${quota.used}/${quota.limit} utilizados`:(aiQuotaBusy?"Consultando…":"Cupo no disponible")}</small>
+      </div>
+      <div>
+        <span>7 DÍAS · LOCAL</span>
+        <strong>${weekSum.requests} llamada${weekSum.requests===1?"":"s"}</strong>
+        <small>${formatTokens(weekSum.totalTokens)} tokens · ${formatUsd(weekSum.costKnown?weekSum.estimatedCostUsd:null)}</small>
+      </div>
+      <div>
+        <span>TOTAL LOCAL</span>
+        <strong>${allSum.requests} llamada${allSum.requests===1?"":"s"}</strong>
+        <small>${formatTokens(allSum.totalTokens)} tokens · ${formatUsd(allSum.costKnown?allSum.estimatedCostUsd:null)}</small>
+      </div>
+      ${last
+        ?`<div><span>ÚLTIMA</span><strong>${formatUsd(last.usage?.estimatedCostUsd)}</strong><small>${formatTokens(last.usage?.totalTokens)} tokens</small></div>`
+        :`<div><span>ÚLTIMA</span><strong>—</strong><small>Aún sin llamadas registradas</small></div>`}
+    </div>
+  `;
 }
 function renderAIUsageDetails(a){
   const u=a?.usage;if(!u?.totalTokens)return "";

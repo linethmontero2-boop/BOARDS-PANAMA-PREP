@@ -944,6 +944,122 @@ async function consumeAIQuota(
   return data;
 }
 
+function getNextUTCResetAt() {
+  const now = new Date();
+
+  return new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + 1,
+      0,
+      0,
+      0,
+      0
+    )
+  ).toISOString();
+}
+
+async function getAIQuotaStatus(userId) {
+  const usageDate = new Date()
+    .toISOString()
+    .slice(0, 10);
+
+  const params = new URLSearchParams({
+    user_id: `eq.${userId}`,
+    usage_date: `eq.${usageDate}`,
+    select: "used,last_request_at,updated_at",
+    limit: "1",
+  });
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/boards_ai_daily_usage?${params.toString()}`,
+    {
+      method: "GET",
+
+      headers: {
+        apikey: SUPABASE_SECRET_KEY,
+        Accept: "application/json",
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+
+  const data = await response
+    .json()
+    .catch(() => null);
+
+  if (!response.ok) {
+    console.error(
+      "Supabase AI quota status error:",
+      response.status,
+      data?.message ||
+        data?.error ||
+        "unknown error"
+    );
+
+    throw new Error(
+      "No se pudo consultar el uso de BOARDS AI."
+    );
+  }
+
+  const row =
+    Array.isArray(data) && data.length
+      ? data[0]
+      : null;
+
+  const used = Math.max(
+    0,
+    Number(row?.used) || 0
+  );
+
+  let retryAfterSeconds = 0;
+
+  if (
+    AI_COOLDOWN_SECONDS > 0 &&
+    row?.last_request_at
+  ) {
+    const availableAt =
+      new Date(
+        row.last_request_at
+      ).getTime() +
+      AI_COOLDOWN_SECONDS * 1000;
+
+    retryAfterSeconds = Math.max(
+      0,
+      Math.ceil(
+        (availableAt - Date.now()) /
+          1000
+      )
+    );
+  }
+
+  return {
+    used,
+
+    limit: AI_DAILY_LIMIT,
+
+    remaining: Math.max(
+      AI_DAILY_LIMIT - used,
+      0
+    ),
+
+    resetAt: getNextUTCResetAt(),
+
+    cooldownSeconds:
+      AI_COOLDOWN_SECONDS,
+
+    retryAfterSeconds,
+
+    lastRequestAt:
+      row?.last_request_at ||
+      null,
+
+    updatedAt:
+      row?.updated_at ||
+      null,
+  };
+}
 function quotaMessage(quota) {
   if (
     quota?.reason ===
@@ -979,30 +1095,22 @@ function quotaMessage(quota) {
   return "BOARDS AI no pudo autorizar esta solicitud en este momento.";
 }
 
-export const handler =
+    export const handler =
   async (event) => {
+    const method =
+      String(
+        event.httpMethod || ""
+      ).toUpperCase();
+
     if (
-      event.httpMethod !==
-      "POST"
+      method !== "GET" &&
+      method !== "POST"
     ) {
       return jsonResponse(
         405,
         {
           message:
             "Método no permitido.",
-        }
-      );
-    }
-
-    if (
-      !process.env
-        .OPENAI_API_KEY
-    ) {
-      return jsonResponse(
-        500,
-        {
-          message:
-            "Falta configurar OPENAI_API_KEY en las variables de entorno de Netlify.",
         }
       );
     }
@@ -1062,6 +1170,58 @@ export const handler =
         {
           message:
             "Tu sesión no es válida o expiró. Inicia sesión nuevamente.",
+        }
+      );
+    }
+
+    /*
+     * V0.7B
+     * GET consulta el cupo del usuario.
+     * No consume cuota y no llama a OpenAI.
+     */
+    if (method === "GET") {
+      try {
+        const quota =
+          await getAIQuotaStatus(
+            authUser.id
+          );
+
+        return jsonResponse(
+          200,
+          {
+            status: "ok",
+            quota,
+          }
+        );
+      } catch (error) {
+        console.error(
+          "BOARDS AI quota status error:",
+          error
+        );
+
+        return jsonResponse(
+          503,
+          {
+            message:
+              "No se pudo consultar tu disponibilidad de BOARDS AI en este momento.",
+          }
+        );
+      }
+    }
+
+    /*
+     * OPENAI_API_KEY solo es necesaria
+     * para solicitudes POST reales.
+     */
+    if (
+      !process.env
+        .OPENAI_API_KEY
+    ) {
+      return jsonResponse(
+        500,
+        {
+          message:
+            "Falta configurar OPENAI_API_KEY en las variables de entorno de Netlify.",
         }
       );
     }
