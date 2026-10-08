@@ -22,7 +22,7 @@ const CLOUD_STATE_SCHEMA_VERSION = 1;
 const CLOUD_SYNC_DEBOUNCE_MS = 750;
 const CLOUD_SYNC_MAX_RETRIES = 4;
 const CLOUD_META_STORAGE_PREFIX = `${STORAGE_KEY}.cloudMeta.v1`;
-const APP_VERSION = "0.7B";
+const APP_VERSION = "0.7B.2";
 
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
@@ -90,7 +90,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.7B"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.7B.2"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -202,7 +202,7 @@ function loadStateForCurrentUser(){
   return fallback;
 }
 
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C","0.7A","0.7B"].includes(String(raw.version||""))};}
+function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C","0.7A","0.7B","0.7B.1","0.7B.2"].includes(String(raw.version||""))};}
 
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
 
@@ -1294,9 +1294,11 @@ function refreshStaticVersionLabels(){
   const targets=[];
   while(walker.nextNode()){
     const node=walker.currentNode;
-    if(node.nodeValue?.includes("V0.6C"))targets.push(node);
+    if(/V0\.(?:6C|7A|7B(?:\.\d+)*)/.test(node.nodeValue||""))targets.push(node);
   }
-  targets.forEach(node=>{node.nodeValue=node.nodeValue.replaceAll("V0.6C",`V${APP_VERSION}`)});
+  targets.forEach(node=>{
+    node.nodeValue=(node.nodeValue||"").replace(/V0\.(?:6C|7A|7B(?:\.\d+)*)/g,`V${APP_VERSION}`)
+  });
 }
 function populateStaticSelects(){fillSelect("errorSystem",SYSTEMS);fillSelect("errorSystemFilter",SYSTEMS,true);fillSelect("errorPopulation",POPULATION_CONTEXTS);fillSelect("errorPopulationFilter",POPULATION_CONTEXTS,true);fillSelect("errorType",ERROR_TYPES);fillSelect("errorTypeFilter",ERROR_TYPES,true)}
 function fillSelect(id,values,all=false){const el=document.getElementById(id);if(!el)return;el.innerHTML=(all?'<option value="all">Todos</option>':"")+values.map(v=>`<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join("")}
@@ -1601,15 +1603,26 @@ async function getAIAccessToken({refresh=false}={}){
   return String(authSession?.access_token||"");
 }
 
-async function fetchBoardsAI({method="GET",body=null,signal=null,retryAuth=true}={}){
+async function fetchBoardsAI({method="GET",body=null,signal=null,retryAuth=true,query=null}={}){
   const requestMethod=String(method||"GET").toUpperCase();
   const bodyText=body===null||body===undefined?null:(typeof body==="string"?body:JSON.stringify(body));
+
+  const buildUrl=()=>{
+    const params=new URLSearchParams();
+    if(query&&typeof query==="object"){
+      Object.entries(query).forEach(([key,value])=>{
+        if(value!==null&&value!==undefined&&String(value)!=="")params.set(key,String(value))
+      })
+    }
+    const qs=params.toString();
+    return `/.netlify/functions/analyze-question${qs?`?${qs}`:""}`
+  };
 
   const send=async token=>{
     const headers={};
     if(bodyText!==null)headers["Content-Type"]="application/json";
     if(token)headers.Authorization=`Bearer ${token}`;
-    return fetch("/.netlify/functions/analyze-question",{
+    return fetch(buildUrl(),{
       method:requestMethod,
       headers,
       ...(bodyText!==null?{body:bodyText}:{}),
@@ -1731,14 +1744,113 @@ async function refreshAIQuotaStatus({force=false}={}){
   }
 }
 
-function renderAILoading(done=0,message="Analizando con BOARDS AI..."){
+function renderAILoading(done=0,message="Analizando con BOARDS AI...",detail="El trabajo continúa en segundo plano aunque la respuesta tarde más de 30 segundos."){
   const stage=document.getElementById("aiAnalysisStage");
   if(!stage)return;
-  const steps=["Leyendo la pregunta y sus opciones","Identificando datos discriminantes","Evaluando razonamiento clínico","Construyendo High-Yield","Generando mini-quiz de 5 preguntas","Preparando Intelligent Flashcards"];
+  const steps=["Solicitud recibida","Leyendo la pregunta y sus opciones","Evaluando razonamiento clínico","Construyendo High-Yield","Generando mini-quiz de 5 preguntas","Preparando Intelligent Flashcards"];
   stage.hidden=false;
-  stage.innerHTML=`<div class="ai-loading-header"><div class="ai-spinner"></div><div><strong>${escapeHTML(message)}</strong><span>La solicitud se procesa mediante el backend seguro. Puede tardar varios segundos en preguntas con imágenes.</span></div></div><div class="ai-loading-steps">${steps.map((step,i)=>`<div class="ai-loading-step ${i<done?"done":""}">${i<done?"✓ ":""}${escapeHTML(step)}</div>`).join("")}</div>`
+  stage.innerHTML=`<div class="ai-loading-header"><div class="ai-spinner"></div><div><strong>${escapeHTML(message)}</strong><span>${escapeHTML(detail)}</span></div></div><div class="ai-loading-steps">${steps.map((step,i)=>`<div class="ai-loading-step ${i<done?"done":""}">${i<done?"✓ ":""}${escapeHTML(step)}</div>`).join("")}</div>`
 }
-function wait(ms){return new Promise(r=>setTimeout(r,ms))}
+
+function wait(ms,signal=null){
+  return new Promise((resolve,reject)=>{
+    if(signal?.aborted){
+      reject(new DOMException("Aborted","AbortError"));
+      return
+    }
+    const timer=window.setTimeout(()=>{
+      signal?.removeEventListener("abort",onAbort);
+      resolve()
+    },ms);
+    const onAbort=()=>{
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort",onAbort);
+      reject(new DOMException("Aborted","AbortError"))
+    };
+    signal?.addEventListener("abort",onAbort,{once:true})
+  })
+}
+
+async function pollAIJob(jobId,{signal,maxWaitMs=13*60*1000}={}){
+  const startedAt=Date.now();
+  let attempt=0;
+  let transientFailures=0;
+
+  while(Date.now()-startedAt<maxWaitMs){
+    if(signal?.aborted)throw new DOMException("Aborted","AbortError");
+
+    const elapsed=Date.now()-startedAt;
+    const done=Math.min(5,1+Math.floor(elapsed/8000));
+    const message=elapsed<5000
+      ?"BOARDS AI recibió tu pregunta…"
+      :elapsed<25000
+        ?"BOARDS AI está construyendo tu revisión…"
+        :"BOARDS AI sigue trabajando en segundo plano…";
+
+    renderAILoading(
+      done,
+      message,
+      "Puedes mantener esta pestaña abierta; ya no dependemos del límite corto de la función web."
+    );
+
+    await wait(attempt<2?900:1800,signal);
+
+    let response;
+    try{
+      response=await fetchBoardsAI({
+        method:"GET",
+        query:{job_id:jobId},
+        signal
+      })
+    }catch(error){
+      if(error?.name==="AbortError")throw error;
+      transientFailures++;
+      if(transientFailures<=8){
+        renderAILoading(
+          done,
+          "Reconectando con BOARDS AI…",
+          "El análisis puede seguir ejecutándose en el servidor. Reintentando la consulta de estado."
+        );
+        await wait(1800,signal);
+        continue
+      }
+      throw error
+    }
+
+    transientFailures=0;
+    const data=await response.json().catch(()=>({}));
+
+    if(hasAIQuotaPayload(data))setAIQuotaStatus(data);
+
+    if(!response.ok){
+      throw new Error(friendlyAIBackendMessage(response.status,data))
+    }
+
+    const jobStatus=String(data?.jobStatus||"").toLowerCase();
+
+    if(jobStatus==="completed"){
+      return data
+    }
+
+    if(jobStatus==="failed"){
+      throw new Error(
+        data?.message||
+        (data?.quotaRefunded
+          ?"BOARDS AI no pudo completar el análisis. La cuota fue devuelta automáticamente."
+          :"BOARDS AI no pudo completar el análisis.")
+      )
+    }
+
+    if(!["queued","processing"].includes(jobStatus)){
+      throw new Error("BOARDS AI devolvió un estado de trabajo no reconocido.")
+    }
+
+    attempt++
+  }
+
+  throw new Error("El análisis sigue tardando más de lo esperado. No envíes una segunda solicitud todavía; el trabajo puede continuar ejecutándose en segundo plano.")
+}
+
 async function runAIAnalysis(){
   if(aiBusy)return;
   const questionText=document.getElementById("aiQuestionText")?.value.trim()||"";
@@ -1746,19 +1858,20 @@ async function runAIAnalysis(){
   if(aiInputMode==="text"&&questionText.length<20){showToast("Pega una pregunta o vignette más completa.");return}
 
   aiBusy=true;
-  const button=document.getElementById("aiAnalyzeButton");
   updateAIAnalyzeButtonState();
   aiCurrentAnalysis=null;
   aiQuizRuntime=null;
   const root=document.getElementById("aiResultRoot");
   if(root)root.innerHTML="";
 
-  let loadingStep=0;
-  renderAILoading(loadingStep);
-  const loadingTimer=window.setInterval(()=>{
-    loadingStep=Math.min(loadingStep+1,5);
-    renderAILoading(loadingStep)
-  },1100);
+  renderAILoading(
+    0,
+    "Preparando análisis…",
+    "Primero BOARDS reservará tu cupo y enviará el trabajo al procesador en segundo plano."
+  );
+
+  const controller=new AbortController();
+  const timeout=window.setTimeout(()=>controller.abort(),13*60*1000);
 
   try{
     const ctx=getAIContext();
@@ -1785,34 +1898,40 @@ async function runAIAnalysis(){
       }
     };
 
-    const controller=new AbortController();
-    const timeout=window.setTimeout(()=>controller.abort(),95000);
-    let response;
-    try{
-      response=await fetchBoardsAI({
-        method:"POST",
-        body:payload,
-        signal:controller.signal
-      })
-    }finally{
-      window.clearTimeout(timeout)
-    }
+    const response=await fetchBoardsAI({
+      method:"POST",
+      body:payload,
+      signal:controller.signal
+    });
 
-    const data=await response.json().catch(()=>({}));
+    const queued=await response.json().catch(()=>({}));
 
-    if(hasAIQuotaPayload(data)){
-      setAIQuotaStatus(data);
-    }
+    if(hasAIQuotaPayload(queued))setAIQuotaStatus(queued);
 
     if(!response.ok){
       if(response.status===404&&location.hostname.includes("webcontainer.io")){
-        throw new Error("La interfaz está lista, pero StackBlitz no ejecuta la función de Netlify en esta vista. Despliega el proyecto en Netlify y prueba desde la URL publicada.")
+        throw new Error("La interfaz está lista, pero StackBlitz no ejecuta la función de Netlify en esta vista. Prueba desde la URL publicada.")
       }
-      throw new Error(friendlyAIBackendMessage(response.status,data))
+      throw new Error(friendlyAIBackendMessage(response.status,queued))
     }
 
+    const jobId=String(queued?.jobId||"").trim();
+    if(response.status!==202||!jobId){
+      throw new Error("BOARDS AI no devolvió un identificador válido para el trabajo en segundo plano.")
+    }
+
+    renderAILoading(
+      1,
+      "Solicitud aceptada · procesando en segundo plano…",
+      "Tu navegador ya no está esperando directamente a OpenAI; ahora solo consulta el estado del trabajo."
+    );
+
+    const data=await pollAIJob(jobId,{
+      signal:controller.signal
+    });
+
     if(!hasAIQuotaPayload(data)){
-      void refreshAIQuotaStatus({force:true});
+      void refreshAIQuotaStatus({force:true})
     }
 
     if(data.status!=="ok"||!data.analysis){
@@ -1830,17 +1949,18 @@ async function runAIAnalysis(){
     console.error(error);
     const offline=typeof navigator!=="undefined"&&navigator.onLine===false;
     const message=offline
-      ?"No hay conexión a internet. Tu progreso local está seguro; vuelve a intentarlo cuando recuperes conexión."
+      ?"No hay conexión a internet. El trabajo puede seguir procesándose en el servidor; recupera conexión antes de intentarlo otra vez."
       :error?.name==="AbortError"
-        ?"El análisis tardó demasiado y fue cancelado. Inténtalo nuevamente."
+        ?"La espera del navegador terminó. No envíes otra solicitud todavía: el trabajo puede seguir ejecutándose en segundo plano."
         :(error?.message||"No se pudo completar el análisis.");
-    renderAIBackendError(message)
+    renderAIBackendError(message);
+    void refreshAIQuotaStatus({force:true})
   }finally{
-    window.clearInterval(loadingTimer);
+    window.clearTimeout(timeout);
     const stage=document.getElementById("aiAnalysisStage");
     if(stage&&aiCurrentAnalysis)stage.hidden=true;
     aiBusy=false;
-    updateAIAnalyzeButtonState();
+    updateAIAnalyzeButtonState()
   }
 }
 
