@@ -944,47 +944,125 @@ async function consumeAIQuota(
   return data;
 }
 
-function getNextUTCResetAt() {
-  const now = new Date();
+const PANAMA_TIME_ZONE =
+  "America/Panama";
 
+function getPanamaDateParts(
+  date = new Date()
+) {
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone:
+          PANAMA_TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }
+    ).formatToParts(date);
+
+  const values = {};
+
+  for (const part of parts) {
+    if (
+      part.type === "year" ||
+      part.type === "month" ||
+      part.type === "day"
+    ) {
+      values[part.type] =
+        Number(part.value);
+    }
+  }
+
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+  };
+}
+
+function getPanamaDateKey(
+  date = new Date()
+) {
+  const {
+    year,
+    month,
+    day,
+  } = getPanamaDateParts(date);
+
+  return [
+    String(year).padStart(4, "0"),
+    String(month).padStart(2, "0"),
+    String(day).padStart(2, "0"),
+  ].join("-");
+}
+
+function getNextPanamaResetAt(
+  date = new Date()
+) {
+  const {
+    year,
+    month,
+    day,
+  } = getPanamaDateParts(date);
+
+  /*
+   * Panamá = UTC-5 todo el año.
+   * 00:00 en Panamá corresponde
+   * a 05:00 UTC.
+   */
   return new Date(
     Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() + 1,
-      0,
+      year,
+      month - 1,
+      day + 1,
+      5,
       0,
       0,
       0
     )
   ).toISOString();
 }
-
 async function getAIQuotaStatus(userId) {
-  const usageDate = new Date()
-    .toISOString()
-    .slice(0, 10);
+  if (
+    !SUPABASE_URL ||
+    !SUPABASE_SECRET_KEY ||
+    !userId
+  ) {
+    throw new Error(
+      "No se pudo verificar el límite de uso de BOARDS AI."
+    );
+  }
 
-  const params = new URLSearchParams({
-    user_id: `eq.${userId}`,
-    usage_date: `eq.${usageDate}`,
-    select: "used,last_request_at,updated_at",
-    limit: "1",
-  });
+  const usageDate =
+    getPanamaDateKey();
 
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/boards_ai_daily_usage?${params.toString()}`,
-    {
-      method: "GET",
+  const params =
+    new URLSearchParams({
+      user_id:
+        `eq.${userId}`,
+      usage_date:
+        `eq.${usageDate}`,
+      select:
+        "used,last_request_at,updated_at",
+      limit:
+        "1",
+    });
 
-      headers: {
-        apikey: SUPABASE_SECRET_KEY,
-        Accept: "application/json",
-        "Cache-Control": "no-store",
-      },
-    }
-  );
-
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/boards_ai_daily_usage?${params.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          apikey:
+            SUPABASE_SECRET_KEY,
+          Accept:
+            "application/json",
+        },
+      }
+    );
   const data = await response
     .json()
     .catch(() => null);
@@ -1044,7 +1122,7 @@ async function getAIQuotaStatus(userId) {
       0
     ),
 
-    resetAt: getNextUTCResetAt(),
+    resetAt: getNextPanamaResetAt(),
 
     cooldownSeconds:
       AI_COOLDOWN_SECONDS,
@@ -1060,6 +1138,7 @@ async function getAIQuotaStatus(userId) {
       null,
   };
 }
+
 function quotaMessage(quota) {
   if (
     quota?.reason ===
