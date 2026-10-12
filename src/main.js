@@ -22,7 +22,7 @@ const CLOUD_STATE_SCHEMA_VERSION = 1;
 const CLOUD_SYNC_DEBOUNCE_MS = 750;
 const CLOUD_SYNC_MAX_RETRIES = 4;
 const CLOUD_META_STORAGE_PREFIX = `${STORAGE_KEY}.cloudMeta.v1`;
-const APP_VERSION = "0.7B.2";
+const APP_VERSION = "0.7B.3";
 
 const DEFAULT_STUDY_ORDER = [1,2,3,4,5,6,7,8];
 const DAY_KEY_BY_INDEX = {0:"sun",1:"mon",2:"tue",3:"wed",4:"thu",5:"fri",6:"sat"};
@@ -50,6 +50,26 @@ const STUDY_MODULES = [
   {id:8,title:"Consolidación, High-Yield y simulacros",shortTitle:"Consolidación",weight:"Repaso integrado",description:"Corrección de puntos ciegos, revisión acumulativa, bloques mixtos y simulacros finales.",topics:["Puntos ciegos prioritarios","Algoritmos de emergencia","Prevención y screening","Farmacología High-Yield","Bloque mixto 1","Bloque mixto 2","Simulacro","Repaso final"]}
 
 ];
+
+const TOPIC_ALIASES = {
+  1:{
+    0:["dolor toracico","sindrome coronario","sca","iam","infarto","angina","acute coronary","myocardial infarction","coronary artery disease","ischemia"],
+    1:["insuficiencia cardiaca","insuficiencia cardíaca","icc","falla cardiaca","heart failure","high-output heart failure","high output heart failure"],
+    2:["arritmia","arritmias","fibrilacion auricular","fibrilación auricular","flutter","atrial flutter","atrial fibrillation","taquicardia","bradicardia","conduccion","conducción","arrhythmia"],
+    3:["valvulopatia","valvulopatía","estenosis aortica","estenosis aórtica","insuficiencia mitral","valve","valvular"],
+    4:["hipertension","hipertensión","hta","hypertension"],
+    5:["pericarditis","taponamiento","tamponade","pericardial"],
+    6:["cardiomiopatia","cardiomiopatía","miocardiopatia","miocardiopatía","cardiomyopathy"],
+    7:["aorta","diseccion aortica","disección aórtica","aneurisma","vascular periferica","vascular periférica","claudicacion","claudicación","peripheral artery","aortic dissection","aortic aneurysm"]
+  }
+};
+const TOPIC_PRIORITY_LABELS = {
+  high:{label:"Prioridad alta",className:"high"},
+  reinforce:{label:"Reforzar",className:"reinforce"},
+  maintain:{label:"Mantener",className:"maintain"},
+  uncovered:{label:"No cubierto",className:"uncovered"}
+};
+
 const MODULE_PLANNING_WEIGHTS = {1:11,2:10,3:14,4:14,5:16,6:13,7:12};
 const PLAN_PRESETS = {
   custom:{label:"Personalizado"},
@@ -90,7 +110,7 @@ const DAILY_MANUAL_TASKS = [
 const PAGE_META = {
   dashboard:{title:"Dashboard",subtitle:"Tu centro de preparación para IFOM / Step 2 CK"}, today:{title:"Estudiar hoy",subtitle:"Tu sesión operativa de BOARDS"},
   planner:{title:"Study Planner",subtitle:"Orden, calendario y metas de preparación"}, prebank:{title:"Pre-Bank",subtitle:"Repaso integrado antes de iniciar el banco"},
-  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.7B.2"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
+  ai:{title:"BOARDS AI",subtitle:"Clinical Review Engine · V0.7B.3"}, errors:{title:"Error Notebook",subtitle:"Convierte fallos en aprendizaje reutilizable"},
   performance:{title:"Rendimiento",subtitle:"Analiza tus patrones y puntos ciegos"}, settings:{title:"Configuración",subtitle:"Fechas, preferencias y respaldo"}
 };
 
@@ -121,7 +141,7 @@ let aiQuotaCooldownUntil = 0, aiQuotaCooldownTimer = null;
 const AI_QUOTA_REFRESH_MS = 45_000;
 const AI_MODEL_LABEL = "gpt-6.1-sol";
 
-function getDefaultState(){return {version:APP_VERSION,updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},dailyTasks:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
+function getDefaultState(){return {version:APP_VERSION,updatedAt:null,theme:"light",currentPage:"dashboard",currentModuleId:1,studyMode:"recommended",studyOrder:[...DEFAULT_STUDY_ORDER],profile:{name:"",startDate:"",examDate:"",dailyQuestionGoal:40,studyDays:["mon","tue","wed","thu","fri","sat"],planPreset:"custom"},plannerTasks:{},prebankCompleted:{},prebankHistory:[],dailyTasks:{},dayClosures:{},bankSessions:[],errors:[],aiAnalyses:[],aiUsageEvents:[],scheduleLocks:{},adaptivePlannerMigrated:true};}
 function normalizeUsage(usage){
   if(!usage||typeof usage!=="object")return null;
   return {
@@ -202,7 +222,33 @@ function loadStateForCurrentUser(){
   return fallback;
 }
 
-function normalizeState(rawState){const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({...s,moduleId:Number(s.moduleId??currentModuleId),localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey())})):[];const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];return {...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,studyMode:raw.studyMode==="custom"?"custom":"recommended",studyOrder:normalizeStudyOrder(raw.studyOrder),profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},dailyTasks:raw.dailyTasks||{},bankSessions:sessions,errors,aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C","0.7A","0.7B","0.7B.1","0.7B.2"].includes(String(raw.version||""))};}
+function normalizeState(rawState){
+  const f=getDefaultState(),raw=rawState&&typeof rawState==="object"?rawState:{};
+  let currentModuleId=Number(raw.currentModuleId??raw.currentWeek??1);
+  if(!DEFAULT_STUDY_ORDER.includes(currentModuleId))currentModuleId=1;
+  const studyDays=Array.isArray(raw.profile?.studyDays)&&raw.profile.studyDays.length?raw.profile.studyDays:f.profile.studyDays;
+  const sessions=Array.isArray(raw.bankSessions)?raw.bankSessions.map(s=>({
+    ...s,
+    moduleId:Number(s.moduleId??currentModuleId),
+    localDate:s.localDate||(s.date?dateKey(new Date(s.date)):todayKey()),
+    topic:String(s.topic||"").trim()
+  })):[];
+  const errors=Array.isArray(raw.errors)?raw.errors.map(e=>({...e,populationContext:e.populationContext||"No determinado"})):[];
+  const usageEvents=Array.isArray(raw.aiUsageEvents)?raw.aiUsageEvents.map(normalizeUsageEvent).filter(Boolean):[];
+  const prebankHistory=Array.isArray(raw.prebankHistory)?raw.prebankHistory.filter(x=>x&&Number.isFinite(Number(x.moduleId))&&Number.isFinite(Number(x.topicIndex))).map(x=>({...x,moduleId:Number(x.moduleId),topicIndex:Number(x.topicIndex),localDate:x.localDate||todayKey()})):[];
+  const dayClosures=raw.dayClosures&&typeof raw.dayClosures==="object"?raw.dayClosures:{};
+  return {
+    ...f,...raw,version:APP_VERSION,updatedAt:raw.updatedAt||null,currentModuleId,
+    studyMode:raw.studyMode==="custom"?"custom":"recommended",
+    studyOrder:normalizeStudyOrder(raw.studyOrder),
+    profile:{...f.profile,...(raw.profile||{}),studyDays,planPreset:raw.profile?.planPreset||"custom"},
+    plannerTasks:raw.plannerTasks||{},prebankCompleted:raw.prebankCompleted||{},prebankHistory,
+    dailyTasks:raw.dailyTasks||{},dayClosures,bankSessions:sessions,errors,
+    aiAnalyses:Array.isArray(raw.aiAnalyses)?raw.aiAnalyses.map(normalizeStoredAIAnalysis):[],aiUsageEvents:usageEvents,
+    scheduleLocks:raw.scheduleLocks&&typeof raw.scheduleLocks==="object"?raw.scheduleLocks:{},
+    adaptivePlannerMigrated:raw.adaptivePlannerMigrated===true||["0.5B.2","0.5B.3","0.5B.4","0.5B.5","0.6A","0.6B","0.6B.1","0.6C","0.7A","0.7B","0.7B.1","0.7B.2","0.7B.3"].includes(String(raw.version||""))
+  };
+}
 
 function normalizeStudyOrder(order){if(!Array.isArray(order))return [...DEFAULT_STUDY_ORDER];const v=[];order.forEach(x=>{const id=Number(x);if(DEFAULT_STUDY_ORDER.includes(id)&&!v.includes(id))v.push(id)});DEFAULT_STUDY_ORDER.forEach(id=>{if(!v.includes(id))v.push(id)});return [...v.filter(id=>id!==8),8];}
 
@@ -699,8 +745,121 @@ function allocatePhaseCounts(total,phases){const counts=phases.map(p=>Math.floor
 function makePhaseAssignments(dates,phase,systemOrder){if(!dates.length)return[];if(phase.mode==='consolidation'||phase.mode==='exam')return dates.map(date=>({date,moduleId:8,phaseId:phase.id,phaseLabel:phase.label,phaseDescription:phase.description,blockLabel:phase.mode==='exam'?'Modo examen':'Consolidación final'}));let ids=[...systemOrder],weightGetter=id=>MODULE_PLANNING_WEIGHTS[id]||10;if(phase.mode==='reinforcement'){ids=[...ids].sort((a,b)=>getAdaptiveModuleScore(b)-getAdaptiveModuleScore(a));weightGetter=id=>getAdaptiveModuleScore(id)}if(phase.mode==='adaptive'){const weak=[...systemOrder].sort((a,b)=>getAdaptiveModuleScore(b)-getAdaptiveModuleScore(a)).slice(0,3);ids=[8,...weak];weightGetter=id=>id===8?Math.max(18,dates.length*.45):getAdaptiveModuleScore(id)}const counts=allocateIntegerCounts(dates.length,ids,weightGetter,phase.mode!=='adaptive');const assignments=[];let offset=0;ids.forEach(moduleId=>{const count=counts.get(moduleId)||0;for(let i=0;i<count;i++){const date=dates[offset++];if(!date)break;assignments.push({date,moduleId,phaseId:phase.id,phaseLabel:phase.label,phaseDescription:phase.description,blockLabel:phase.mode==='foundation'?'Primera vuelta':phase.mode==='reinforcement'?'Revisión adaptativa':phase.mode==='adaptive'?(moduleId===8?'Bloques mixtos':'Refuerzo de punto ciego'):phase.label})}});while(offset<dates.length){assignments.push({date:dates[offset++],moduleId:8,phaseId:phase.id,phaseLabel:phase.label,phaseDescription:phase.description,blockLabel:phase.label})}return assignments}
 function annotateScheduleAssignments(assignments){const blocks=[];let current=null;assignments.forEach(day=>{const groupKey=`${day.phaseId}|${day.moduleId}|${day.blockLabel}`;if(!current||current.groupKey!==groupKey){current={id:`block-${blocks.length+1}-${day.phaseId}-${day.moduleId}`,groupKey,moduleId:day.moduleId,phaseId:day.phaseId,phaseLabel:day.phaseLabel,phaseDescription:day.phaseDescription,blockLabel:day.blockLabel,dates:[],dayRefs:[],position:getModulePosition(day.moduleId),sequence:blocks.length+1};blocks.push(current)}current.dates.push(day.date);current.dayRefs.push(day);day.blockId=current.id});const visits={};blocks.forEach(block=>{visits[block.moduleId]=(visits[block.moduleId]||0)+1;block.visitNumber=visits[block.moduleId];block.studyDays=block.dates.length;block.startDate=block.dates[0]||null;block.endDate=block.dates.at(-1)||null;block.targetQuestions=block.studyDays*Number(state.profile.dailyQuestionGoal||0);block.dayRefs.forEach((day,i)=>{day.visitNumber=block.visitNumber;day.dayIndex=i;day.totalDays=block.studyDays;day.blockStartDate=block.startDate;day.blockEndDate=block.endDate;day.blockSequence=block.sequence});delete block.dayRefs});return {assignments,blocks}}
 function buildRawStudySchedule(){const start=parseLocalDate(state.profile.startDate),exam=parseLocalDate(state.profile.examDate);if(!start||!exam||exam<=start)return null;const enabled=state.profile.studyDays||[];if(!enabled.length)return null;const studyDates=getStudyDates(start,exam,enabled);if(!studyDates.length)return null;const profile=getPlanProfile(studyDates.length),phaseCounts=allocatePhaseCounts(studyDates.length,profile.phases),systemOrder=getSystemStudyOrder();let offset=0,assignments=[];const phases=profile.phases.map((phase,index)=>{const dates=studyDates.slice(offset,offset+phaseCounts[index]);offset+=phaseCounts[index];const phaseAssignments=makePhaseAssignments(dates,phase,systemOrder);assignments.push(...phaseAssignments);return {...phase,index:index+1,studyDays:dates.length,startDate:dates[0]||null,endDate:dates.at(-1)||null,dates}});const annotated=annotateScheduleAssignments(assignments);return {start,exam,profile,phases,assignments:annotated.assignments,blocks:annotated.blocks,studyDates,totalStudyDays:studyDates.length,totalQuestions:studyDates.length*Number(state.profile.dailyQuestionGoal||0),calendarDays:differenceInDays(start,exam)}}
-function hasActivityOnDate(localDate){if(state.bankSessions.some(s=>getSessionDateKey(s)===localDate))return true;return Object.keys(state.dailyTasks||{}).some(k=>k.startsWith(`${localDate}|`))}
-function getRecordedModuleForDate(localDate){const sessionModules=[...new Set(state.bankSessions.filter(s=>getSessionDateKey(s)===localDate).map(s=>Number(s.moduleId)).filter(DEFAULT_STUDY_ORDER.includes.bind(DEFAULT_STUDY_ORDER)))];if(sessionModules.length===1)return sessionModules[0];const taskKeys=Object.keys(state.dailyTasks||{}).filter(k=>k.startsWith(`${localDate}|`));const taskModules=[...new Set(taskKeys.map(k=>Number(k.split('|')[1])).filter(DEFAULT_STUDY_ORDER.includes.bind(DEFAULT_STUDY_ORDER)))];if(taskModules.length===1)return taskModules[0];return null}
+
+function normalizeSearchText(value=""){
+  return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
+function getClosureKey(localDate,moduleId){return `${localDate}|${Number(moduleId)}`}
+function getDayClosure(localDate,moduleId){return state.dayClosures?.[getClosureKey(localDate,moduleId)]||null}
+function setDayClosure(localDate,moduleId,status,reason=""){
+  const allowed=["complete","partial","paused"];
+  if(!allowed.includes(status))return;
+  state.dayClosures=state.dayClosures||{};
+  state.dayClosures[getClosureKey(localDate,moduleId)]={status,reason:String(reason||"").trim(),moduleId:Number(moduleId),localDate,closedAt:new Date().toISOString()};
+  ensureHistoricalScheduleLocks();saveState();renderAll();
+}
+function reopenDay(localDate,moduleId){
+  const key=getClosureKey(localDate,moduleId);
+  if(state.dayClosures?.[key])delete state.dayClosures[key];
+  saveState();renderAll();showToast("Jornada reabierta.");
+}
+function getClosureLabel(closure){
+  if(!closure)return "Abierta";
+  if(closure.status==="complete")return "Completa";
+  if(closure.status==="partial")return "Parcial";
+  if(closure.status==="paused")return "Pausa justificada";
+  return "Abierta";
+}
+function getTopicAliases(moduleId,topicIndex){return TOPIC_ALIASES?.[Number(moduleId)]?.[Number(topicIndex)]||[]}
+function getSessionTopicText(session){return [session?.topic,session?.note].filter(Boolean).join(" ").trim()}
+function topicMatchScore(text,topic,aliases=[]){
+  const source=normalizeSearchText(text),target=normalizeSearchText(topic);
+  if(!source)return 0;
+  if(target&&source===target)return 100;
+  if(target&&source.includes(target))return 88;
+  let best=0;
+  for(const alias of aliases){const a=normalizeSearchText(alias);if(!a)continue;if(source===a)best=Math.max(best,96);else if(source.includes(a))best=Math.max(best,82)}
+  const tokens=target.split(" ").filter(x=>x.length>=4);
+  if(tokens.length){const hits=tokens.filter(t=>source.includes(t)).length;best=Math.max(best,Math.round(hits/tokens.length*70))}
+  return best;
+}
+function inferSessionTopicIndex(session){
+  const moduleId=Number(session?.moduleId),m=getModule(moduleId),text=getSessionTopicText(session);
+  if(!text||!m?.topics?.length)return null;
+  let bestIndex=null,bestScore=0;
+  m.topics.forEach((topic,index)=>{const score=topicMatchScore(text,topic,getTopicAliases(moduleId,index));if(score>bestScore){bestScore=score;bestIndex=index}});
+  return bestScore>=45?bestIndex:null;
+}
+function getTopicQuestionStats(moduleId,topicIndex){
+  const sessions=state.bankSessions.filter(s=>Number(s.moduleId)===Number(moduleId)&&inferSessionTopicIndex(s)===Number(topicIndex));
+  const questions=sessions.reduce((a,s)=>a+Number(s.questions||0),0),correct=sessions.reduce((a,s)=>a+Number(s.correct||0),0);
+  return {sessions,questions,correct,accuracy:questions?Math.round(correct/questions*100):null};
+}
+function getTopicErrors(moduleId,topicIndex){
+  const topic=getModule(moduleId)?.topics?.[topicIndex]||"",aliases=getTopicAliases(moduleId,topicIndex);
+  return state.errors.filter(error=>{
+    const systemOk=getAllowedSystemsForModule(moduleId).includes(error.system)||Number(moduleId)===8;
+    if(!systemOk)return false;
+    return topicMatchScore(`${error.topic||""} ${error.concept||""}`,topic,aliases)>=45;
+  });
+}
+function getPrebankHistoryForTopic(moduleId,topicIndex){return (state.prebankHistory||[]).filter(x=>Number(x.moduleId)===Number(moduleId)&&Number(x.topicIndex)===Number(topicIndex))}
+function hasLegacyPrebankCompletion(moduleId,topicIndex){return Boolean(state.prebankCompleted?.[`week-${moduleId}`]?.[topicIndex])}
+function getTopicReviewStats(moduleId,topicIndex){
+  const history=getPrebankHistoryForTopic(moduleId,topicIndex),legacy=hasLegacyPrebankCompletion(moduleId,topicIndex),dates=history.map(x=>parseLocalDate(x.localDate)).filter(Boolean).sort((a,b)=>b-a);
+  return {exposures:history.length+(legacy?1:0),lastDate:dates[0]||null,reviewedToday:history.some(x=>x.localDate===todayKey()),legacy};
+}
+function getTopicPriority(moduleId,topicIndex,referenceDate=new Date()){
+  const q=getTopicQuestionStats(moduleId,topicIndex),r=getTopicReviewStats(moduleId,topicIndex),errors=getTopicErrors(moduleId,topicIndex).length;
+  if(!q.questions&&!r.exposures)return {...TOPIC_PRIORITY_LABELS.uncovered,key:"uncovered"};
+  if(!q.questions&&r.exposures)return {...TOPIC_PRIORITY_LABELS.reinforce,key:"reinforce",detail:"Falta validarlo con banco"};
+  if((q.questions>=5&&q.accuracy<60)||errors>=2)return {...TOPIC_PRIORITY_LABELS.high,key:"high"};
+  if((q.questions>=5&&q.accuracy<75)||errors===1)return {...TOPIC_PRIORITY_LABELS.reinforce,key:"reinforce"};
+  if(q.questions>0&&q.questions<5)return {...TOPIC_PRIORITY_LABELS.reinforce,key:"reinforce",detail:"Muestra pequeña"};
+  const daysSince=r.lastDate?Math.max(0,differenceInDays(r.lastDate,normalizeDate(referenceDate))):null;
+  if(daysSince!==null&&daysSince>14)return {...TOPIC_PRIORITY_LABELS.reinforce,key:"reinforce",detail:"Repaso vencido"};
+  return {...TOPIC_PRIORITY_LABELS.maintain,key:"maintain"};
+}
+function getAdaptiveTopicRecommendations(moduleId,localDate=todayKey(),limit=3){
+  const m=getModule(moduleId),ref=parseLocalDate(localDate)||normalizeDate(new Date());
+  const rows=m.topics.map((topic,index)=>{
+    const q=getTopicQuestionStats(moduleId,index),r=getTopicReviewStats(moduleId,index),errors=getTopicErrors(moduleId,index).length,priority=getTopicPriority(moduleId,index,ref);
+    let score=0;
+    if(!r.exposures)score+=55;
+    if(!q.questions)score+=20;
+    if(q.questions&&q.questions<5)score+=28;
+    if(q.accuracy!==null){if(q.accuracy<60)score+=95;else if(q.accuracy<75)score+=65;else if(q.accuracy<85)score+=30;else score+=5}
+    score+=errors*20;
+    if(r.lastDate){const days=Math.max(0,differenceInDays(r.lastDate,ref));score+=Math.min(days,30)*1.4}
+    const reviewedOnDate=getPrebankHistoryForTopic(moduleId,index).some(x=>x.localDate===localDate);
+    if(reviewedOnDate)score-=140;
+    return {topic,index,q,r,errors,priority,score};
+  }).sort((a,b)=>b.score-a.score);
+  return rows.slice(0,Math.max(1,limit));
+}
+function getTopicStatsLabel(moduleId,topicIndex){
+  const q=getTopicQuestionStats(moduleId,topicIndex);
+  if(!q.questions)return "Sin preguntas registradas";
+  return `${q.questions} preguntas · ${q.accuracy}% correctas`;
+}
+
+function hasActivityOnDate(localDate){
+  if(state.bankSessions.some(s=>getSessionDateKey(s)===localDate))return true;
+  if(Object.keys(state.dailyTasks||{}).some(k=>k.startsWith(`${localDate}|`)))return true;
+  if(Object.values(state.dayClosures||{}).some(c=>c?.localDate===localDate))return true;
+  if((state.prebankHistory||[]).some(x=>x.localDate===localDate))return true;
+  return false;
+}
+function getRecordedModuleForDate(localDate){
+  const sessionModules=[...new Set(state.bankSessions.filter(s=>getSessionDateKey(s)===localDate).map(s=>Number(s.moduleId)).filter(DEFAULT_STUDY_ORDER.includes.bind(DEFAULT_STUDY_ORDER)))];
+  if(sessionModules.length===1)return sessionModules[0];
+  const closureModules=[...new Set(Object.values(state.dayClosures||{}).filter(c=>c?.localDate===localDate).map(c=>Number(c.moduleId)).filter(DEFAULT_STUDY_ORDER.includes.bind(DEFAULT_STUDY_ORDER)))];
+  if(closureModules.length===1)return closureModules[0];
+  const taskKeys=Object.keys(state.dailyTasks||{}).filter(k=>k.startsWith(`${localDate}|`));
+  const taskModules=[...new Set(taskKeys.map(k=>Number(k.split('|')[1])).filter(DEFAULT_STUDY_ORDER.includes.bind(DEFAULT_STUDY_ORDER)))];
+  if(taskModules.length===1)return taskModules[0];
+  return null;
+}
 function buildLegacyStudySchedule(){const start=parseLocalDate(state.profile.startDate),exam=parseLocalDate(state.profile.examDate);if(!start||!exam||exam<=start)return null;const enabled=state.profile.studyDays||[];if(!enabled.length)return null;const studyDates=getStudyDates(start,exam,enabled);if(!studyDates.length)return null;const order=getActiveStudyOrder(),base=Math.floor(studyDates.length/order.length),remainder=studyDates.length%order.length;let offset=0;const blocks=order.map((moduleId,index)=>{const count=base+(index<remainder?1:0),dates=studyDates.slice(offset,offset+count);offset+=count;return {moduleId,position:index+1,dates,studyDays:dates.length,startDate:dates[0]||null,endDate:dates.at(-1)||null}});return {start,exam,blocks,studyDates}}
 function migrateLegacyPlannerIfNeeded(){if(state.adaptivePlannerMigrated)return false;state.scheduleLocks=state.scheduleLocks||{};const legacy=buildLegacyStudySchedule(),today=normalizeDate(new Date());if(legacy){legacy.blocks.forEach(block=>block.dates.forEach((date,i)=>{const key=dateKey(date);if(!(date<today||hasActivityOnDate(key))||state.scheduleLocks[key])return;const recordedModule=getRecordedModuleForDate(key),moduleId=recordedModule||block.moduleId;state.scheduleLocks[key]={moduleId,phaseId:"legacy",phaseLabel:"Plan previo",phaseDescription:"Jornada preservada desde el calendario anterior a Adaptive Study Planner.",blockLabel:"Asignación histórica",visitNumber:1,dayIndex:i,totalDays:block.studyDays,blockStartDate:block.startDate?dateKey(block.startDate):key,blockEndDate:block.endDate?dateKey(block.endDate):key}}))}state.adaptivePlannerMigrated=true;return true}
 function ensureHistoricalScheduleLocks(){const raw=buildRawStudySchedule();if(!raw)return false;state.scheduleLocks=state.scheduleLocks||{};const today=normalizeDate(new Date());let changed=false;raw.assignments.forEach(day=>{const key=dateKey(day.date),shouldLock=day.date<today||hasActivityOnDate(key);if(!shouldLock||state.scheduleLocks[key])return;const recordedModule=getRecordedModuleForDate(key),moduleId=recordedModule||day.moduleId;state.scheduleLocks[key]={moduleId,phaseId:day.phaseId,phaseLabel:day.phaseLabel,phaseDescription:day.phaseDescription,blockLabel:recordedModule&&recordedModule!==day.moduleId?'Histórico preservado':day.blockLabel,visitNumber:day.visitNumber||1,dayIndex:day.dayIndex??0,totalDays:day.totalDays||1,blockStartDate:day.blockStartDate?dateKey(day.blockStartDate):key,blockEndDate:day.blockEndDate?dateKey(day.blockEndDate):key};changed=true});return changed}
@@ -720,8 +879,21 @@ function getModuleQuestionStats(moduleId){const sessions=state.bankSessions.filt
 function getDailyTaskKey(localDate,moduleId){return `${localDate}|${moduleId}`}
 function getDailyTaskRecord(localDate,moduleId){return state.dailyTasks[getDailyTaskKey(localDate,moduleId)]||{moduleId:Number(moduleId),prebank:false,review:false,anki:false,highyield:false}}
 function toggleDailyTask(localDate,moduleId,taskId){if(!DAILY_MANUAL_TASKS.some(t=>t.id===taskId))return;const key=getDailyTaskKey(localDate,moduleId),r=getDailyTaskRecord(localDate,moduleId);state.dailyTasks[key]={...r,[taskId]:!r[taskId]};ensureHistoricalScheduleLocks();saveState();renderAll()}
-function getDailyCompletionData(localDate,moduleId){const record=getDailyTaskRecord(localDate,moduleId),questionStats=getQuestionStatsForDate(localDate,moduleId),goal=Number(state.profile.dailyQuestionGoal||40),fraction=clamp(questionStats.questions/goal,0,1),components={prebank:record.prebank?1:0,questions:fraction,review:record.review?1:0,anki:record.anki?1:0,highyield:record.highyield?1:0},total=Object.values(components).reduce((a,b)=>a+b,0);return {record,questionStats,goal,components,percentage:Math.round(total/5*100),questionsCompleted:questionStats.questions>=goal}}
-function getPendingPastStudyDays(){const s=getStudySchedule();if(!s)return [];const t=normalizeDate(new Date());return s.assignments.filter(day=>day.date<t).map(day=>{const block=s.blocks.find(b=>b.id===day.blockId);if(!block)return null;return {date:day.date,block,completion:getDailyCompletionData(dateKey(day.date),day.moduleId)}}).filter(x=>x&&x.completion.percentage<100)}
+function getDailyCompletionData(localDate,moduleId){
+  const record=getDailyTaskRecord(localDate,moduleId),questionStats=getQuestionStatsForDate(localDate,moduleId),goal=Number(state.profile.dailyQuestionGoal||40),questionFraction=clamp(questionStats.questions/goal,0,1);
+  const routineComponents={prebank:record.prebank?1:0,review:record.review?1:0,anki:record.anki?1:0,highyield:record.highyield?1:0};
+  const routineTotal=Object.values(routineComponents).reduce((a,b)=>a+b,0),routinePercentage=Math.round(routineTotal/Object.keys(routineComponents).length*100),questionGoalPercentage=Math.round(questionFraction*100),closure=getDayClosure(localDate,moduleId);
+  return {record,questionStats,goal,components:{...routineComponents,questions:questionFraction},routineComponents,routinePercentage,questionGoalPercentage,percentage:routinePercentage,questionsCompleted:questionStats.questions>=goal,closure};
+}
+function getPendingPastStudyDays(){
+  const s=getStudySchedule();if(!s)return [];
+  const t=normalizeDate(new Date());
+  return s.assignments.filter(day=>day.date<t).map(day=>{
+    const block=s.blocks.find(b=>b.id===day.blockId);if(!block)return null;
+    const completion=getDailyCompletionData(dateKey(day.date),day.moduleId);
+    return {date:day.date,block,completion};
+  }).filter(x=>x&&!x.completion.closure&&(x.completion.routinePercentage<100||!x.completion.questionsCompleted));
+}
 function setActiveStudyDate(localDate){if(!parseLocalDate(localDate))return;editingSessionId=null;activeStudyDateKey=localDate;renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 function returnToToday(){editingSessionId=null;activeStudyDateKey=todayKey();renderToday();window.scrollTo({top:0,behavior:"smooth"})}
 
@@ -1318,30 +1490,130 @@ function renderDashboardSchedule(){const c=document.getElementById("dashboardSch
 function getQuestionTotals(){const questions=state.bankSessions.reduce((a,s)=>a+Number(s.questions||0),0),correct=state.bankSessions.reduce((a,s)=>a+Number(s.correct||0),0);return {questions,correct,accuracy:questions?Math.round(correct/questions*100):0}}
 function renderDashboardStats(){const t=getQuestionTotals();document.getElementById("statQuestions").textContent=t.questions;document.getElementById("statAccuracy").textContent=t.questions?`${t.accuracy}%`:"—";document.getElementById("statErrors").textContent=state.errors.length;document.getElementById("statStreak").textContent=calculateStreak()}
 function renderDashboardToday(){const c=document.getElementById("dashboardWeekTasks"),title=document.getElementById("currentWeekPanelTitle"),chip=document.getElementById("currentWeekDateChip"),ctx=getOperationalContext(new Date()),m=getModule(ctx.moduleId);title.textContent=ctx.isStudyDay?m.shortTitle:"Objetivos del día";chip.textContent=formatShortDate(new Date());chip.classList.add("visible");if(!ctx.isStudyDay){let msg="Hoy no tienes una jornada de estudio programada.";if(ctx.type==="before-plan")msg="Tu calendario todavía no ha comenzado.";if(ctx.type==="no-calendar")msg="Configura tu calendario para activar los objetivos diarios.";c.innerHTML=`<div class="empty-mini">${msg}</div>`;return}c.innerHTML=renderDailyTaskRowsHTML(ctx,false);bindDailyTaskButtons(c,ctx)}
-function getErrorPriorities(){const counts={};state.errors.forEach(i=>counts[i.topic]=(counts[i.topic]||0)+1);return Object.entries(counts).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count)}
-function renderPriorities(){const c=document.getElementById("priorityList"),p=getErrorPriorities();c.innerHTML=p.length?p.slice(0,4).map((x,i)=>`<div class="priority-item"><div class="priority-rank">${i+1}</div><div class="priority-copy"><strong>${escapeHTML(x.name)}</strong><span>${x.count} ${x.count===1?"error":"errores"}</span></div></div>`).join(""):'<div class="empty-mini">Aún no hay suficientes errores registrados. Cuando agregues preguntas falladas, aquí aparecerán tus principales puntos ciegos.</div>'}
+function getErrorPriorities(){
+  const topicRows=[];
+  STUDY_MODULES.filter(m=>m.id!==8).forEach(m=>m.topics.forEach((topic,index)=>{
+    const q=getTopicQuestionStats(m.id,index),errors=getTopicErrors(m.id,index).length,priority=getTopicPriority(m.id,index);
+    if(!(q.questions||errors)||!["high","reinforce"].includes(priority.key))return;
+    let score=errors*25+(q.accuracy===null?0:Math.max(0,85-q.accuracy))+(q.questions<5?12:0);if(priority.key==="high")score+=45;else score+=20;
+    topicRows.push({name:topic,count:errors,questions:q.questions,accuracy:q.accuracy,priority,score,moduleId:m.id});
+  }));
+  return topicRows.sort((a,b)=>b.score-a.score);
+}
+function renderPriorities(){
+  const c=document.getElementById("priorityList"),p=getErrorPriorities();
+  c.innerHTML=p.length?p.slice(0,4).map((x,i)=>`<div class="priority-item"><div class="priority-rank">${i+1}</div><div class="priority-copy"><strong>${escapeHTML(x.name)}</strong><span>${x.accuracy===null?"Sin precisión":`${x.accuracy}% en ${x.questions} preguntas`} · ${escapeHTML(x.priority.label)}${x.count?` · ${x.count} error${x.count===1?"":"es"}`:""}</span></div></div>`).join(""):'<div class="empty-mini">Aún no hay suficientes datos por tema. Registra el tema/subtema en tus bloques de UWorld para que BOARDS detecte qué reforzar.</div>';
+}
 function renderDashboardWeeks(){const c=document.getElementById("dashboardWeeks"),ctx=getOperationalContext(new Date()),currentId=ctx.isStudyDay?ctx.moduleId:state.currentModuleId;c.innerHTML=getActiveStudyOrder().map((id,i)=>{const m=getModule(id),p=getModuleProgress(id),visits=getScheduleBlocksForModule(id).length;return `<div class="week-progress-card ${id===currentId?"current":""}"><span class="week-progress-position">BLOQUE ${i+1}${visits>1?` · ${visits} visitas`:""}</span><strong>${escapeHTML(m.shortTitle)}</strong><span>${p}% completado</span><div class="progress-track"><div class="progress-fill" style="width:${p}%"></div></div></div>`}).join("")}
 function renderOverallProgress(){const p=getOverallProgress();document.getElementById("overallProgressRing").style.setProperty("--progress",`${p*3.6}deg`);document.getElementById("overallProgressValue").textContent=`${p}%`}
 
-function renderToday(){const d=parseLocalDate(activeStudyDateKey)||normalizeDate(new Date()),ctx=getOperationalContext(d);document.getElementById("todayDate").textContent=formatLongLocalDate(d);renderTodayHeadingActions();renderTodayPendingAlert();renderTodayCommandCard(ctx);renderTodayMetrics(ctx);renderTodayProgress(ctx);renderTodayTopics(ctx);renderQuestionGoal(ctx);renderSessionFormContext(ctx);renderTodaySessionHistory(ctx)}
+function renderToday(){
+  const d=parseLocalDate(activeStudyDateKey)||normalizeDate(new Date()),ctx=getOperationalContext(d);
+  document.getElementById("todayDate").textContent=formatLongLocalDate(d);
+  renderTodayHeadingActions();renderTodayPendingAlert();renderTodayCommandCard(ctx);renderTodayMetrics(ctx);renderTodayProgress(ctx);renderTodayClosureControls(ctx);renderTodayTopics(ctx);renderQuestionGoal(ctx);renderSessionFormContext(ctx);renderTodaySessionHistory(ctx);
+}
 function renderTodayHeadingActions(){const c=document.getElementById("todayHeadingActions");if(isViewingToday()){c.innerHTML="";return}c.innerHTML='<span class="history-date-badge">Viendo jornada histórica</span><button class="button button-secondary" data-return-today>Volver a hoy</button>';c.querySelector("[data-return-today]")?.addEventListener("click",returnToToday)}
 function renderTodayCommandCard(ctx){const c=document.getElementById("todayCommandCard"),m=getModule(ctx.moduleId);c.classList.toggle("history-mode",!isViewingToday());if(ctx.type==="no-calendar"){c.innerHTML='<div class="daily-command-main"><span class="daily-command-label">CALENDARIO ADAPTATIVO</span><h3>Configura tu plan de estudio</h3><p>Añade tus fechas y días disponibles para que BOARDS pueda construir cada jornada.</p></div><div class="daily-command-side"><span class="daily-status-pill future">Sin calendario</span></div>';return}if(ctx.type==="before-plan"){c.innerHTML=`<div class="daily-command-main"><span class="daily-command-label">TU PLAN COMIENZA PRONTO</span><h3>${escapeHTML(getModule(ctx.block?.moduleId??ctx.moduleId).shortTitle)}</h3><p>Tu primera jornada está programada para ${ctx.block?.startDate?formatDate(ctx.block.startDate):"la fecha configurada"}.</p></div><div class="daily-command-side"><span class="daily-status-pill future">Próximamente</span></div>`;return}if(ctx.type==="after-exam"){c.innerHTML='<div class="daily-command-main"><span class="daily-command-label">PLAN FINALIZADO</span><h3>La fecha del examen ya llegó</h3><p>Actualiza tu calendario si deseas continuar utilizando la plataforma.</p></div><div class="daily-command-side"><span class="daily-status-pill future">Finalizado</span></div>';return}if(ctx.type==="rest"){c.innerHTML='<div class="daily-command-main"><span class="daily-command-label">RECUPERACIÓN</span><h3>Día de descanso programado</h3><p>Esta fecha no tiene una jornada formal asignada en el calendario.</p></div><div class="daily-command-side"><span class="daily-status-pill rest">Descanso</span></div>';return}c.innerHTML=`<div class="daily-command-main"><span class="daily-command-label">${escapeHTML((ctx.phaseLabel||ctx.block.phaseLabel||"PLAN ADAPTATIVO").toUpperCase())} · BLOQUE ${getModulePosition(ctx.moduleId)}</span><h3>${escapeHTML(m.title)}</h3><p>${escapeHTML(ctx.block.blockLabel||"Jornada programada")} · ${formatDateRange(ctx.block.startDate,ctx.block.endDate)} · Meta diaria: ${state.profile.dailyQuestionGoal} preguntas${ctx.locked?' · Histórico protegido':''}</p></div><div class="daily-command-side"><span class="daily-day-number">Día ${(ctx.moduleDayIndex??ctx.dayIndex)+1}</span><span class="daily-day-label">de ${ctx.moduleTotalDays??ctx.totalDays} en el plan actual</span><span class="daily-status-pill ${isViewingToday()?"":"history"}">${isViewingToday()?"Jornada activa":"Jornada histórica"}</span></div>`}
-function renderTodayMetrics(ctx){const c=document.getElementById("todayMetricsGrid"),local=dateKey(ctx.date),s=getQuestionStatsForDate(local,ctx.moduleId),ms=getModuleQuestionStats(ctx.moduleId),goal=Number(state.profile.dailyQuestionGoal||40),r=Math.max(goal-s.questions,0);c.innerHTML=`<article class="daily-metric-card"><span>PREGUNTAS DEL DÍA</span><strong>${s.questions} / ${goal}</strong><small>${s.questions>=goal?"Meta alcanzada":"Progreso del banco"}</small></article><article class="daily-metric-card"><span>RESTANTES</span><strong>${r}</strong><small>preguntas para completar la meta</small></article><article class="daily-metric-card"><span>PRECISIÓN DEL DÍA</span><strong>${s.accuracy===null?"—":`${s.accuracy}%`}</strong><small>${s.questions?`${s.correct}/${s.questions} correctas`:"Sin bloques todavía"}</small></article><article class="daily-metric-card"><span>PRECISIÓN DEL MÓDULO</span><strong>${ms.accuracy===null?"—":`${ms.accuracy}%`}</strong><small>${ms.questions?`${ms.questions} preguntas acumuladas`:"Sin datos suficientes"}</small></article>`}
-function renderTodayProgress(ctx){const c=document.getElementById("todayTaskList"),bar=document.getElementById("todayProgressBar"),value=document.getElementById("todayProgressValue");if(!ctx.isStudyDay){bar.style.width="0%";value.textContent="—";c.innerHTML=`<div class="empty-mini">${ctx.type==="rest"?"Esta fecha es un día de descanso programado.":"No hay una jornada operativa activa para esta fecha."}</div>`;return}const local=dateKey(ctx.date),d=getDailyCompletionData(local,ctx.moduleId);bar.style.width=`${d.percentage}%`;value.textContent=`${d.percentage}%`;c.innerHTML=renderDailyTaskRowsHTML(ctx,true);bindDailyTaskButtons(c,ctx)}
+function renderTodayMetrics(ctx){
+  const c=document.getElementById("todayMetricsGrid"),local=dateKey(ctx.date),s=getQuestionStatsForDate(local,ctx.moduleId),ms=getModuleQuestionStats(ctx.moduleId),goal=Number(state.profile.dailyQuestionGoal||40),r=Math.max(goal-s.questions,0),d=getDailyCompletionData(local,ctx.moduleId);
+  c.innerHTML=`<article class="daily-metric-card"><span>PREGUNTAS DEL DÍA</span><strong>${s.questions} / ${goal}</strong><small>${s.questions>=goal?"Meta alcanzada":`${d.questionGoalPercentage}% de la meta`}</small></article><article class="daily-metric-card"><span>ESTADO DE JORNADA</span><strong class="metric-status-text">${escapeHTML(getClosureLabel(d.closure))}</strong><small>${d.closure?.status==="partial"?"Actividad real conservada":d.closure?.status==="paused"?"No cuenta como incompleta":d.closure?.status==="complete"?"Jornada cerrada":"Aún puedes seguir registrando"}</small></article><article class="daily-metric-card"><span>PRECISIÓN DEL DÍA</span><strong>${s.accuracy===null?"—":`${s.accuracy}%`}</strong><small>${s.questions?`${s.correct}/${s.questions} correctas`:"Sin bloques todavía"}</small></article><article class="daily-metric-card"><span>PRECISIÓN DEL MÓDULO</span><strong>${ms.accuracy===null?"—":`${ms.accuracy}%`}</strong><small>${ms.questions?`${ms.questions} preguntas acumuladas`:"Sin datos suficientes"}</small></article>`;
+}
+function renderTodayProgress(ctx){
+  const c=document.getElementById("todayTaskList"),bar=document.getElementById("todayProgressBar"),value=document.getElementById("todayProgressValue");
+  if(!ctx.isStudyDay){bar.style.width="0%";value.textContent="—";c.innerHTML=`<div class="empty-mini">${ctx.type==="rest"?"Esta fecha es un día de descanso programado.":"No hay una jornada operativa activa para esta fecha."}</div>`;return}
+  const local=dateKey(ctx.date),d=getDailyCompletionData(local,ctx.moduleId);bar.style.width=`${d.routinePercentage}%`;value.textContent=`${d.routinePercentage}%`;c.innerHTML=renderDailyTaskRowsHTML(ctx,true);bindDailyTaskButtons(c,ctx);
+}
 function getAIAnalysisCountForDate(localDate,moduleId){return state.aiAnalyses.filter(a=>a.localDate===localDate&&Number(a.moduleId)===Number(moduleId)).length}
-function renderDailyTaskRowsHTML(ctx,detailed=true){const local=dateKey(ctx.date),d=getDailyCompletionData(local,ctx.moduleId),rows=[];DAILY_MANUAL_TASKS.forEach(task=>{const done=Boolean(d.record[task.id]);let desc=task.description;if(task.id==="review"){const n=getAIAnalysisCountForDate(local,ctx.moduleId);if(n)desc=`${n} análisis BOARDS AI realizado${n===1?"":"s"} en esta jornada · ${task.description}`}rows.push(`<div class="daily-task-row ${done?"done":""}"><div class="daily-task-check">${done?"✓":""}</div><div class="daily-task-copy"><strong>${escapeHTML(task.title)}</strong>${detailed?`<span>${escapeHTML(desc)}</span>`:""}</div><button class="daily-task-action" data-daily-task="${task.id}">${done?"Reabrir":"Completar"}</button></div>`);if(task.id==="prebank"){const q=d.questionsCompleted;rows.push(`<div class="daily-task-row ${q?"done":""}"><div class="daily-task-check">${q?"✓":""}</div><div class="daily-task-copy"><strong>Banco de preguntas</strong><span>${d.questionStats.questions} / ${d.goal} preguntas realizadas</span></div><span class="auto-badge">AUTOMÁTICO</span></div>`)}});return rows.join("")}
+function renderDailyTaskRowsHTML(ctx,detailed=true){
+  const local=dateKey(ctx.date),d=getDailyCompletionData(local,ctx.moduleId),rows=[];
+  DAILY_MANUAL_TASKS.forEach(task=>{
+    const done=Boolean(d.record[task.id]);let desc=task.description;
+    if(task.id==="review"){const n=getAIAnalysisCountForDate(local,ctx.moduleId);if(n)desc=`${n} análisis BOARDS AI realizado${n===1?"":"s"} en esta jornada · ${task.description}`}
+    rows.push(`<div class="daily-task-row ${done?"done":""}"><div class="daily-task-check">${done?"✓":""}</div><div class="daily-task-copy"><strong>${escapeHTML(task.title)}</strong>${detailed?`<span>${escapeHTML(desc)}</span>`:""}</div><button class="daily-task-action" data-daily-task="${task.id}" ${d.closure?"disabled":""}>${done?"Reabrir":"Completar"}</button></div>`);
+  });
+  return rows.join("");
+}
 function bindDailyTaskButtons(c,ctx){c.querySelectorAll("[data-daily-task]").forEach(b=>b.addEventListener("click",()=>toggleDailyTask(dateKey(ctx.date),ctx.moduleId,b.dataset.dailyTask)))}
-function renderTodayTopics(ctx){const c=document.getElementById("todayTopicAssignment");if(!ctx.isStudyDay){c.innerHTML=`<div class="empty-mini">${ctx.type==="rest"?"No hay temas obligatorios asignados en esta fecha.":"Los temas aparecerán cuando exista una jornada activa."}</div>`;return}const t=getAssignedTopics(ctx);c.innerHTML=`<div class="today-topic-list">${t.map((x,i)=>`<div class="today-topic-item"><div class="today-topic-index">${i+1}</div><div><strong>${escapeHTML(x)}</strong><span>Presentación → diagnóstico → Next Best Step → tratamiento</span></div></div>`).join("")}</div><div class="today-topic-actions"><button class="button button-secondary" data-open-today-prebank>Abrir Pre-Bank</button></div>`;c.querySelector("[data-open-today-prebank]")?.addEventListener("click",()=>{state.currentModuleId=ctx.moduleId;saveState();renderAll();navigateTo("prebank")})}
-function renderQuestionGoal(ctx){const c=document.getElementById("todayQuestionGoal"),local=dateKey(ctx.date),s=getQuestionStatsForDate(local,ctx.moduleId),goal=Number(state.profile.dailyQuestionGoal||40),pct=Math.round(clamp(s.questions/goal,0,1)*100),r=Math.max(goal-s.questions,0);c.innerHTML=`<div class="question-goal-top"><div><span>META DEL DÍA</span><strong>${s.questions} / ${goal}</strong></div><span>${r?`${r} pendientes`:"Meta completada ✓"}</span></div><div class="question-goal-track"><div class="question-goal-fill" style="width:${pct}%"></div></div><div class="question-goal-meta"><span>${pct}% de la meta</span><span>${s.accuracy===null?"Sin precisión aún":`${s.accuracy}% correctas`}</span></div>`}
-function renderSessionFormContext(ctx){const select=document.getElementById("sessionSystem"),badge=document.getElementById("sessionContextBadge"),note=document.getElementById("sessionSystemNote"),submit=document.getElementById("sessionSubmitButton"),q=document.getElementById("sessionQuestions"),correct=document.getElementById("sessionCorrect"),noteInput=document.getElementById("sessionNote"),editing=editingSessionId?state.bankSessions.find(s=>s.id===editingSessionId):null,allowed=getAllowedSystemsForModule(ctx.moduleId);select.innerHTML=allowed.map(s=>`<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join("");let mismatch=false;if(editing&&!allowed.includes(editing.system)){mismatch=true;select.insertAdjacentHTML("afterbegin",`<option value="${escapeHTML(editing.system)}">⚠ ${escapeHTML(editing.system)} — revisar</option>`)}if(editing)select.value=editing.system;const m=getModule(ctx.moduleId);badge.innerHTML=`<strong>Bloque ${getModulePosition(ctx.moduleId)} · ${escapeHTML(m.shortTitle)}</strong><span>${escapeHTML(ctx.phaseLabel||ctx.block?.phaseLabel||"")} · ${formatShortDate(ctx.date)}</span>${allowed.length===1?'<span class="system-lock-chip">Sistema bloqueado</span>':""}`;note.className=mismatch?"integrity-note visible warning":"integrity-note visible";note.textContent=mismatch?"Este registro antiguo usa un sistema que no pertenece al módulo. Selecciona una opción válida antes de guardar.":allowed.length===1?"El sistema se asigna automáticamente para evitar inconsistencias entre el módulo y las estadísticas.":"Selecciona el componente específico que trabajaste dentro de este módulo.";const enabled=ctx.isStudyDay;select.disabled=!enabled||(allowed.length===1&&!mismatch);q.disabled=!enabled;correct.disabled=!enabled;noteInput.disabled=!enabled;submit.disabled=!enabled;renderSessionEditMode(editing)}
+
+function renderTodayClosureControls(ctx){
+  const c=document.getElementById("todayClosureControls");if(!c)return;
+  if(!ctx.isStudyDay){c.innerHTML="";return}
+  const local=dateKey(ctx.date),d=getDailyCompletionData(local,ctx.moduleId),closure=d.closure;
+  if(closure){
+    const tone=closure.status==="complete"?"success":closure.status==="paused"?"pause":"partial";
+    c.innerHTML=`<div class="day-closure-status ${tone}"><div><span>JORNADA CERRADA</span><strong>${escapeHTML(getClosureLabel(closure))}</strong>${closure.reason?`<small>${escapeHTML(closure.reason)}</small>`:""}</div><button class="button button-secondary" data-reopen-day>Reabrir jornada</button></div>`;
+    c.querySelector("[data-reopen-day]")?.addEventListener("click",()=>reopenDay(local,ctx.moduleId));
+    return;
+  }
+  const canComplete=d.questionsCompleted&&d.routinePercentage===100;
+  c.innerHTML=`<div class="day-closure-box"><div><span class="panel-kicker">CIERRE DE JORNADA</span><strong>${canComplete?"Todo listo para cerrar":"Cierra sin falsear tu actividad"}</strong><p>${canComplete?"Cumpliste la rutina y la meta del banco.":`Llevas ${d.questionStats.questions}/${d.goal} preguntas y ${d.routinePercentage}% de la rutina. Puedes cerrar como parcial y conservar exactamente esos datos.`}</p></div><div class="day-closure-actions"><button class="button ${canComplete?"button-primary":"button-secondary"}" data-close-day="${canComplete?"complete":"partial"}">${canComplete?"Cerrar como completa":"Cerrar como parcial"}</button><button class="button button-secondary" data-close-day="paused">Pausa justificada</button></div></div>`;
+  c.querySelectorAll("[data-close-day]").forEach(button=>button.addEventListener("click",()=>{
+    const status=button.dataset.closeDay;
+    if(status==="paused"){
+      const hasActivity=d.questionStats.questions>0||Object.values(d.routineComponents).some(Boolean);
+      if(hasActivity&&!window.confirm("Esta jornada ya tiene actividad registrada. ¿Quieres convertirla en pausa justificada de todas formas?"))return;
+      const reason=window.prompt("Motivo de la pausa (opcional):","")??null;if(reason===null)return;
+      setDayClosure(local,ctx.moduleId,"paused",reason);showToast("Pausa justificada registrada. No contará como una jornada incompleta.");return;
+    }
+    setDayClosure(local,ctx.moduleId,status,"");showToast(status==="complete"?"Jornada cerrada como completa.":"Jornada cerrada como parcial. Tus preguntas reales se conservaron.");
+  }));
+}
+
+function renderTodayTopics(ctx){
+  const c=document.getElementById("todayTopicAssignment");
+  if(!ctx.isStudyDay){c.innerHTML=`<div class="empty-mini">${ctx.type==="rest"?"No hay temas obligatorios asignados en esta fecha.":"Los temas aparecerán cuando exista una jornada activa."}</div>`;return}
+  const adaptive=getAdaptiveTopicRecommendations(ctx.moduleId,dateKey(ctx.date),3),scheduled=getAssignedTopics(ctx),hasBankData=getModuleQuestionStats(ctx.moduleId).questions>0;
+  const topics=hasBankData?adaptive.map(x=>x.topic):scheduled;
+  c.innerHTML=`<div class="today-topic-list">${topics.map((x,i)=>{
+    const idx=getModule(ctx.moduleId).topics.indexOf(x),priority=idx>=0?getTopicPriority(ctx.moduleId,idx,ctx.date):null,stats=idx>=0?getTopicStatsLabel(ctx.moduleId,idx):"";
+    return `<div class="today-topic-item"><div class="today-topic-index">${i+1}</div><div class="today-topic-copy"><strong>${escapeHTML(x)}</strong><span>${hasBankData?`${priority?escapeHTML(priority.label)+" · ":""}${escapeHTML(stats)}`:"Presentación → diagnóstico → Next Best Step → tratamiento"}</span></div>${priority?`<span class="topic-priority-chip ${priority.className}">${escapeHTML(priority.label)}</span>`:""}</div>`
+  }).join("")}</div><div class="today-topic-reason">${hasBankData?"BOARDS prioriza estos temas según precisión, volumen de preguntas, errores y tiempo desde el último repaso.":"Aún no hay suficiente rendimiento del banco; se usa la asignación curricular del calendario."}</div><div class="today-topic-actions"><button class="button button-secondary" data-open-today-prebank>Abrir Pre-Bank</button></div>`;
+  c.querySelector("[data-open-today-prebank]")?.addEventListener("click",()=>{state.currentModuleId=ctx.moduleId;saveState();renderAll();navigateTo("prebank")});
+}
+function renderQuestionGoal(ctx){
+  const c=document.getElementById("todayQuestionGoal"),local=dateKey(ctx.date),s=getQuestionStatsForDate(local,ctx.moduleId),goal=Number(state.profile.dailyQuestionGoal||40),pct=Math.round(clamp(s.questions/goal,0,1)*100),r=Math.max(goal-s.questions,0),closure=getDayClosure(local,ctx.moduleId);
+  c.innerHTML=`<div class="question-goal-top"><div><span>META DEL BANCO</span><strong>${s.questions} / ${goal}</strong></div><span>${closure?.status==="partial"?"Jornada cerrada parcial":closure?.status==="paused"?"Pausa justificada":r?`${r} pendientes`:"Meta completada ✓"}</span></div><div class="question-goal-track"><div class="question-goal-fill" style="width:${pct}%"></div></div><div class="question-goal-meta"><span>${pct}% de la meta planificada</span><span>${s.accuracy===null?"Sin precisión aún":`${s.accuracy}% correctas`}</span></div>`;
+}
+function renderSessionFormContext(ctx){
+  const select=document.getElementById("sessionSystem"),badge=document.getElementById("sessionContextBadge"),note=document.getElementById("sessionSystemNote"),submit=document.getElementById("sessionSubmitButton"),q=document.getElementById("sessionQuestions"),correct=document.getElementById("sessionCorrect"),noteInput=document.getElementById("sessionNote"),topicInput=document.getElementById("sessionTopic"),topicList=document.getElementById("sessionTopicSuggestions"),editing=editingSessionId?state.bankSessions.find(s=>s.id===editingSessionId):null,allowed=getAllowedSystemsForModule(ctx.moduleId);
+  select.innerHTML=allowed.map(s=>`<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join("");
+  if(topicList)topicList.innerHTML=getModule(ctx.moduleId).topics.map(t=>`<option value="${escapeHTML(t)}"></option>`).join("");
+  let mismatch=false;if(editing&&!allowed.includes(editing.system)){mismatch=true;select.insertAdjacentHTML("afterbegin",`<option value="${escapeHTML(editing.system)}">⚠ ${escapeHTML(editing.system)} — revisar</option>`)}if(editing)select.value=editing.system;
+  const m=getModule(ctx.moduleId);badge.innerHTML=`<strong>Bloque ${getModulePosition(ctx.moduleId)} · ${escapeHTML(m.shortTitle)}</strong><span>${escapeHTML(ctx.phaseLabel||ctx.block?.phaseLabel||"")} · ${formatShortDate(ctx.date)}</span>${allowed.length===1?'<span class="system-lock-chip">Sistema bloqueado</span>':""}`;
+  note.className=mismatch?"integrity-note visible warning":"integrity-note visible";note.textContent=mismatch?"Este registro antiguo usa un sistema que no pertenece al módulo. Selecciona una opción válida antes de guardar.":"Añade el tema o subtema del bloque. BOARDS lo usará para calcular qué debes reforzar en el Pre-Bank.";
+  const closure=getDayClosure(dateKey(ctx.date),ctx.moduleId),enabled=ctx.isStudyDay&&!closure;
+  select.disabled=!enabled||(allowed.length===1&&!mismatch);q.disabled=!enabled;correct.disabled=!enabled;noteInput.disabled=!enabled;if(topicInput)topicInput.disabled=!enabled;submit.disabled=!enabled;
+  renderSessionEditMode(editing);
+}
 function initSessionEditControls(){document.getElementById("cancelSessionEdit")?.addEventListener("click",()=>cancelSessionEdit())}
-function renderSessionEditMode(session){const title=document.getElementById("sessionFormTitle"),mode=document.getElementById("sessionFormMode"),submit=document.getElementById("sessionSubmitButton"),cancel=document.getElementById("cancelSessionEdit"),hidden=document.getElementById("sessionEditId");if(!session){title.textContent="Registrar bloque";mode.textContent="";mode.classList.remove("visible");submit.textContent="Registrar bloque";cancel.hidden=true;hidden.value="";return}title.textContent="Editar bloque";mode.textContent="MODO EDICIÓN";mode.classList.add("visible");submit.textContent="Guardar cambios";cancel.hidden=false;hidden.value=session.id;document.getElementById("sessionQuestions").value=session.questions;document.getElementById("sessionCorrect").value=session.correct;document.getElementById("sessionNote").value=session.note||""}
+function renderSessionEditMode(session){
+  const title=document.getElementById("sessionFormTitle"),mode=document.getElementById("sessionFormMode"),submit=document.getElementById("sessionSubmitButton"),cancel=document.getElementById("cancelSessionEdit"),hidden=document.getElementById("sessionEditId");
+  if(!session){title.textContent="Registrar bloque";mode.textContent="";mode.classList.remove("visible");submit.textContent="Registrar bloque";cancel.hidden=true;hidden.value="";return}
+  title.textContent="Editar bloque";mode.textContent="MODO EDICIÓN";mode.classList.add("visible");submit.textContent="Guardar cambios";cancel.hidden=false;hidden.value=session.id;
+  document.getElementById("sessionQuestions").value=session.questions;document.getElementById("sessionCorrect").value=session.correct;document.getElementById("sessionTopic").value=session.topic||"";document.getElementById("sessionNote").value=session.note||"";
+}
 function startEditingSession(id){const s=state.bankSessions.find(x=>x.id===id);if(!s)return;activeStudyDateKey=getSessionDateKey(s);editingSessionId=s.id;renderToday();requestAnimationFrame(()=>document.getElementById("sessionForm")?.scrollIntoView({behavior:"smooth",block:"center"}))}
 function cancelSessionEdit(render=true){editingSessionId=null;document.getElementById("sessionForm")?.reset();if(render)renderToday()}
 function initForms(){document.getElementById("sessionForm")?.addEventListener("submit",handleSessionSubmit);document.getElementById("errorForm")?.addEventListener("submit",handleErrorSubmit);document.getElementById("settingsForm")?.addEventListener("submit",handleSettingsSubmit);document.getElementById("errorSystemFilter")?.addEventListener("change",renderErrors);document.getElementById("errorPopulationFilter")?.addEventListener("change",renderErrors);document.getElementById("errorTypeFilter")?.addEventListener("change",renderErrors);document.getElementById("prebankWeekSelect")?.addEventListener("change",renderPrebank);document.getElementById("settingsPlanPreset")?.addEventListener("change",handlePlanPresetChange);["settingsStartDate","settingsExamDate","settingsDailyGoal"].forEach(id=>document.getElementById(id)?.addEventListener("input",()=>{const preset=document.getElementById("settingsPlanPreset");if(id==="settingsExamDate"&&preset)preset.value="custom";if(id==="settingsStartDate"&&preset&&preset.value!=="custom"){const start=parseLocalDate(document.getElementById("settingsStartDate")?.value),end=start?applyPresetEndDate(start,preset.value):null;if(end)document.getElementById("settingsExamDate").value=dateKey(end)}renderSettingsPlanPreview()}));document.querySelectorAll("[data-study-day]").forEach(i=>i.addEventListener("change",renderSettingsPlanPreview))}
-function handleSessionSubmit(e){e.preventDefault();const active=parseLocalDate(activeStudyDateKey),ctx=getOperationalContext(active);if(!ctx.isStudyDay){showToast("Esta fecha no tiene una jornada de estudio activa.");return}const questions=Number(document.getElementById("sessionQuestions").value),correct=Number(document.getElementById("sessionCorrect").value),system=document.getElementById("sessionSystem").value,allowed=getAllowedSystemsForModule(ctx.moduleId);if(!allowed.includes(system)){showToast("Selecciona un sistema compatible con este módulo.");return}if(!questions||questions<1){showToast("Introduce un total válido de preguntas.");return}if(correct<0||correct>questions){showToast("Las correctas no pueden superar el total.");return}const note=document.getElementById("sessionNote").value.trim();if(editingSessionId){const i=state.bankSessions.findIndex(s=>s.id===editingSessionId);if(i===-1){showToast("No se encontró el bloque a editar.");return}state.bankSessions[i]={...state.bankSessions[i],system,questions,correct,note,moduleId:ctx.moduleId,localDate:activeStudyDateKey,updatedAt:new Date().toISOString()};editingSessionId=null;ensureHistoricalScheduleLocks();saveState();renderAll();showToast("Bloque actualizado correctamente.");return}state.bankSessions.unshift({id:createId("session"),system,questions,correct,note,moduleId:ctx.moduleId,localDate:activeStudyDateKey,date:new Date().toISOString()});ensureHistoricalScheduleLocks();saveState();e.currentTarget.reset();renderAll();const d=getDailyCompletionData(activeStudyDateKey,ctx.moduleId);showToast(d.questionsCompleted?"Bloque guardado · Meta diaria alcanzada ✓":`Bloque guardado · faltan ${Math.max(d.goal-d.questionStats.questions,0)} preguntas.`)}
+function handleSessionSubmit(e){
+  e.preventDefault();const active=parseLocalDate(activeStudyDateKey),ctx=getOperationalContext(active);
+  if(!ctx.isStudyDay){showToast("Esta fecha no tiene una jornada de estudio activa.");return}
+  if(getDayClosure(activeStudyDateKey,ctx.moduleId)){showToast("Reabre la jornada antes de registrar otro bloque.");return}
+  const questions=Number(document.getElementById("sessionQuestions").value),correct=Number(document.getElementById("sessionCorrect").value),system=document.getElementById("sessionSystem").value,allowed=getAllowedSystemsForModule(ctx.moduleId);
+  if(!allowed.includes(system)){showToast("Selecciona un sistema compatible con este módulo.");return}
+  if(!questions||questions<1){showToast("Introduce un total válido de preguntas.");return}
+  if(correct<0||correct>questions){showToast("Las correctas no pueden superar el total.");return}
+  const topic=document.getElementById("sessionTopic")?.value.trim()||"",note=document.getElementById("sessionNote").value.trim();
+  if(editingSessionId){const i=state.bankSessions.findIndex(s=>s.id===editingSessionId);if(i===-1){showToast("No se encontró el bloque a editar.");return}state.bankSessions[i]={...state.bankSessions[i],system,topic,questions,correct,note,moduleId:ctx.moduleId,localDate:activeStudyDateKey,updatedAt:new Date().toISOString()};editingSessionId=null;ensureHistoricalScheduleLocks();saveState();renderAll();showToast("Bloque actualizado correctamente.");return}
+  state.bankSessions.unshift({id:createId("session"),system,topic,questions,correct,note,moduleId:ctx.moduleId,localDate:activeStudyDateKey,date:new Date().toISOString()});ensureHistoricalScheduleLocks();saveState();e.currentTarget.reset();renderAll();const d=getDailyCompletionData(activeStudyDateKey,ctx.moduleId);showToast(d.questionsCompleted?"Bloque guardado · Meta diaria alcanzada ✓":`Bloque guardado · llevas ${d.questionStats.questions}/${d.goal} preguntas.`);
+}
 function openSessionInAI(session){aiContextDateKey=getSessionDateKey(session);aiLinkedSessionId=session.id;aiSelectedSystem=session.system;aiCurrentAnalysis=null;aiQuizRuntime=null;navigateTo("ai")}
-function renderTodaySessionHistory(ctx){const c=document.getElementById("todaySessionHistory"),k=document.getElementById("sessionHistoryKicker");k.textContent=isViewingToday()?"HOY":formatShortDate(ctx.date).toUpperCase();const sessions=getSessionsForDate(dateKey(ctx.date),ctx.moduleId);if(!sessions.length){c.innerHTML='<div class="empty-mini">Todavía no hay bloques registrados para esta jornada.</div>';return}c.innerHTML=sessions.map(s=>{const acc=s.questions?Math.round(s.correct/s.questions*100):0,time=s.date?new Intl.DateTimeFormat("es-PA",{hour:"numeric",minute:"2-digit"}).format(new Date(s.date)):"",valid=isSessionSystemAllowed(s.system,s.moduleId),errors=Math.max(Number(s.questions)-Number(s.correct),0);return `<div class="session-row"><div class="session-system"><div class="session-system-header"><strong>${escapeHTML(s.system)}</strong>${!valid?'<span class="session-integrity-warning">REVISAR SISTEMA</span>':""}</div><span>${time}${s.note?` · ${escapeHTML(s.note)}`:""}${errors?` · ${errors} error${errors===1?"":"es"}`:""}</span></div><div class="session-data">Preguntas<strong>${s.questions}</strong></div><div class="session-data">Correctas<strong>${s.correct}</strong></div><div class="session-data">Precisión<strong>${acc}%</strong></div><div class="session-actions">${errors?`<button class="session-ai" data-ai-session="${s.id}">✦ Analizar errores</button>`:""}<button class="session-edit" data-edit-session="${s.id}">Editar</button><button class="session-delete" data-delete-session="${s.id}">Eliminar</button></div></div>`}).join("");c.querySelectorAll("[data-ai-session]").forEach(b=>b.addEventListener("click",()=>{const s=state.bankSessions.find(x=>x.id===b.dataset.aiSession);if(s)openSessionInAI(s)}));c.querySelectorAll("[data-edit-session]").forEach(b=>b.addEventListener("click",()=>startEditingSession(b.dataset.editSession)));c.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click",()=>{if(!window.confirm("¿Eliminar este bloque de preguntas?"))return;const id=b.dataset.deleteSession;state.bankSessions=state.bankSessions.filter(s=>s.id!==id);if(editingSessionId===id)editingSessionId=null;if(aiLinkedSessionId===id)aiLinkedSessionId="";saveState();renderAll();showToast("Bloque eliminado.")}))}
+function renderTodaySessionHistory(ctx){
+  const c=document.getElementById("todaySessionHistory"),k=document.getElementById("sessionHistoryKicker");k.textContent=isViewingToday()?"HOY":formatShortDate(ctx.date).toUpperCase();const sessions=getSessionsForDate(dateKey(ctx.date),ctx.moduleId);
+  if(!sessions.length){c.innerHTML='<div class="empty-mini">Todavía no hay bloques registrados para esta jornada.</div>';return}
+  c.innerHTML=sessions.map(s=>{const acc=s.questions?Math.round(s.correct/s.questions*100):0,time=s.date?new Intl.DateTimeFormat("es-PA",{hour:"numeric",minute:"2-digit"}).format(new Date(s.date)):"",valid=isSessionSystemAllowed(s.system,s.moduleId),errors=Math.max(Number(s.questions)-Number(s.correct),0),topicIndex=inferSessionTopicIndex(s),topicLabel=s.topic||((topicIndex!==null)?getModule(s.moduleId).topics[topicIndex]:"");return `<div class="session-row"><div class="session-system"><div class="session-system-header"><strong>${escapeHTML(topicLabel||s.system)}</strong>${topicLabel?`<span class="session-system-sub">${escapeHTML(s.system)}</span>`:""}${!valid?'<span class="session-integrity-warning">REVISAR SISTEMA</span>':""}</div><span>${time}${s.note?` · ${escapeHTML(s.note)}`:""}${errors?` · ${errors} error${errors===1?"":"es"}`:""}</span></div><div class="session-data">Preguntas<strong>${s.questions}</strong></div><div class="session-data">Correctas<strong>${s.correct}</strong></div><div class="session-data">Precisión<strong>${acc}%</strong></div><div class="session-actions">${errors?`<button class="session-ai" data-ai-session="${s.id}">✦ Analizar errores</button>`:""}<button class="session-edit" data-edit-session="${s.id}">Editar</button><button class="session-delete" data-delete-session="${s.id}">Eliminar</button></div></div>`}).join("");
+  c.querySelectorAll("[data-ai-session]").forEach(b=>b.addEventListener("click",()=>{const s=state.bankSessions.find(x=>x.id===b.dataset.aiSession);if(s)openSessionInAI(s)}));c.querySelectorAll("[data-edit-session]").forEach(b=>b.addEventListener("click",()=>startEditingSession(b.dataset.editSession)));c.querySelectorAll("[data-delete-session]").forEach(b=>b.addEventListener("click",()=>{if(!window.confirm("¿Eliminar este bloque de preguntas?"))return;const id=b.dataset.deleteSession;state.bankSessions=state.bankSessions.filter(s=>s.id!==id);if(editingSessionId===id)editingSessionId=null;if(aiLinkedSessionId===id)aiLinkedSessionId="";saveState();renderAll();showToast("Bloque eliminado.")}));
+}
 function renderTodayPendingAlert(){const c=document.getElementById("todayPendingAlert"),p=getPendingPastStudyDays();if(!p.length){c.innerHTML="";return}const v=p.slice(0,3);c.innerHTML=`<div class="pending-alert"><div class="pending-alert-main"><strong>${p.length} ${p.length===1?"jornada previa incompleta":"jornadas previas incompletas"}</strong><span>El calendario no se moverá automáticamente. Puedes abrir una jornada para completarla o corregir sus registros.</span><div class="pending-links">${v.map(x=>`<button class="pending-day-button" data-open-pending-day="${dateKey(x.date)}">${formatShortDate(x.date)} · ${escapeHTML(getModule(x.block.moduleId).shortTitle)} · ${x.completion.percentage}%</button>`).join("")}${p.length>3?`<span class="pending-more">+${p.length-3} más</span>`:""}</div></div></div>`;c.querySelectorAll("[data-open-pending-day]").forEach(b=>b.addEventListener("click",()=>setActiveStudyDate(b.dataset.openPendingDay)))}
 
 function initPlannerControls(){document.querySelectorAll("[data-study-mode]").forEach(b=>b.addEventListener("click",()=>{const m=b.dataset.studyMode;if(!["recommended","custom"].includes(m))return;ensureHistoricalScheduleLocks();state.studyMode=m;saveState();renderAll()}));document.getElementById("resetStudyOrder")?.addEventListener("click",()=>{if(!window.confirm("¿Restaurar el orden personalizado?"))return;ensureHistoricalScheduleLocks();state.studyOrder=[...DEFAULT_STUDY_ORDER];state.studyMode="custom";saveState();renderAll();showToast("Orden restaurado. El historial previo permanece protegido.")})}
@@ -1362,9 +1634,22 @@ function handlePlannerDragLeave(e){e.currentTarget.classList.remove("drag-over")
 function handlePlannerDrop(e){e.preventDefault();e.currentTarget.classList.remove("drag-over");const target=Number(e.currentTarget.dataset.plannerModule);if(!draggedModuleId||draggedModuleId===target||target===8)return;reorderModuleBefore(draggedModuleId,target)}
 function reorderModuleBefore(source,target){if(source===8||target===8)return;ensureHistoricalScheduleLocks();const systems=state.studyOrder.filter(x=>x!==8),i=systems.indexOf(source);if(i===-1)return;systems.splice(i,1);const j=systems.indexOf(target);if(j===-1)return;systems.splice(j,0,source);state.studyOrder=[...systems,8];saveState();renderAll();showToast("Orden futuro actualizado. Las jornadas pasadas permanecen intactas.")}
 
-function renderPrebank(){const sel=document.getElementById("prebankWeekSelect"),prev=Number(sel.value),order=getActiveStudyOrder(),selected=DEFAULT_STUDY_ORDER.includes(prev)?prev:state.currentModuleId;sel.innerHTML=order.map((id,i)=>`<option value="${id}">Bloque ${i+1} · ${escapeHTML(getModule(id).shortTitle)}</option>`).join("");sel.value=String(selected);if(!sel.value)sel.value=String(state.currentModuleId);const id=Number(sel.value),m=getModule(id),pos=getModulePosition(id),summary=getModuleScheduleSummary(id),completed=m.topics.filter((_,i)=>isPrebankCompleted(id,i)).length,pct=Math.round(completed/m.topics.length*100);document.getElementById("prebankSummary").innerHTML=`<div class="prebank-summary-main"><strong>Bloque ${pos} · ${escapeHTML(m.shortTitle)}</strong><span>${escapeHTML(m.weight)}${summary.studyDays?` · ${summary.studyDays} días programados · ${summary.visits} ${summary.visits===1?"visita":"visitas"}`:""}</span></div><strong class="prebank-summary-score">${completed}/${m.topics.length} · ${pct}%</strong>`;const c=document.getElementById("prebankTopics");c.innerHTML=m.topics.map((t,i)=>{const checked=isPrebankCompleted(id,i);return `<article class="topic-card ${checked?"completed":""}"><span class="topic-index">${String(i+1).padStart(2,"0")}</span><h3>${escapeHTML(t)}</h3><p>Presentación clínica, diagnóstico, Next Best Step, tratamiento, complicaciones y trampas BOARDS.</p><button class="topic-check-button" data-prebank-topic="${i}" data-prebank-module="${id}">${checked?"✓ Repasado":"Marcar como repasado"}</button></article>`}).join("");c.querySelectorAll("[data-prebank-topic]").forEach(b=>b.addEventListener("click",()=>togglePrebankTopic(Number(b.dataset.prebankModule),Number(b.dataset.prebankTopic))))}
-function isPrebankCompleted(id,i){return Boolean(state.prebankCompleted?.[`week-${id}`]?.[i])}
-function togglePrebankTopic(id,i){const k=`week-${id}`;if(!state.prebankCompleted[k])state.prebankCompleted[k]={};state.prebankCompleted[k][i]=!state.prebankCompleted[k][i];saveState();renderAll()}
+function renderPrebank(){
+  const sel=document.getElementById("prebankWeekSelect"),prev=Number(sel.value),order=getActiveStudyOrder(),selected=DEFAULT_STUDY_ORDER.includes(prev)?prev:state.currentModuleId;
+  sel.innerHTML=order.map((id,i)=>`<option value="${id}">Bloque ${i+1} · ${escapeHTML(getModule(id).shortTitle)}</option>`).join("");sel.value=String(selected);if(!sel.value)sel.value=String(state.currentModuleId);
+  const id=Number(sel.value),m=getModule(id),pos=getModulePosition(id),summary=getModuleScheduleSummary(id),reviewed=m.topics.filter((_,i)=>getTopicReviewStats(id,i).exposures>0).length,pct=Math.round(reviewed/m.topics.length*100),recommendations=getAdaptiveTopicRecommendations(id,todayKey(),3);
+  document.getElementById("prebankSummary").innerHTML=`<div class="prebank-summary-main"><strong>Bloque ${pos} · ${escapeHTML(m.shortTitle)}</strong><span>${escapeHTML(m.weight)}${summary.studyDays?` · ${summary.studyDays} días programados · ${summary.visits} ${summary.visits===1?"visita":"visitas"}`:""}</span></div><strong class="prebank-summary-score">${reviewed}/${m.topics.length} cubiertos</strong>`;
+  const rec=document.getElementById("prebankRecommendations");if(rec)rec.innerHTML=`<div class="prebank-recommendation-panel"><div><span class="panel-kicker">RECOMENDADO HOY</span><strong>Qué conviene repasar ahora</strong><p>Se ponderan precisión, número de preguntas, errores y repeticiones previas. Un 1/1 o 4/4 no se considera dominio sólido.</p></div><div class="prebank-recommendation-list">${recommendations.map((x,i)=>`<button class="prebank-rec-chip ${x.priority.className}" data-focus-prebank-topic="${x.index}"><b>${i+1}</b><span>${escapeHTML(x.topic)}</span><small>${escapeHTML(x.priority.label)} · ${escapeHTML(getTopicStatsLabel(id,x.index))}</small></button>`).join("")}</div></div>`;
+  const c=document.getElementById("prebankTopics");c.innerHTML=m.topics.map((t,i)=>{const review=getTopicReviewStats(id,i),q=getTopicQuestionStats(id,i),priority=getTopicPriority(id,i),errors=getTopicErrors(id,i).length,reviewedToday=review.reviewedToday,last=review.lastDate?formatShortDate(review.lastDate):(review.legacy?"registro previo":"—");return `<article class="topic-card ${reviewedToday?"completed":""}" data-prebank-card="${i}"><div class="topic-card-topline"><span class="topic-index">${String(i+1).padStart(2,"0")}</span><span class="topic-priority-chip ${priority.className}">${escapeHTML(priority.label)}</span></div><h3>${escapeHTML(t)}</h3><div class="topic-metrics"><span><b>${q.questions||0}</b> preguntas</span><span><b>${q.accuracy===null?"—":`${q.accuracy}%`}</b> precisión</span><span><b>${review.exposures}</b> repaso${review.exposures===1?"":"s"}</span><span><b>${errors}</b> error${errors===1?"":"es"}</span></div><p>Último repaso: <strong>${escapeHTML(last)}</strong>. ${q.questions&&q.questions<5?"Muestra aún pequeña; no se interpreta como dominio.":priority.key==="high"?"Rendimiento bajo o errores repetidos: priorízalo.":priority.key==="reinforce"?"Necesita otra exposición dirigida.":priority.key==="maintain"?"Buen control actual; mantén repetición espaciada.":"Aún no hay evidencia suficiente."}</p><button class="topic-check-button" data-prebank-topic="${i}" data-prebank-module="${id}">${reviewedToday?"✓ Repasado hoy · deshacer":"Registrar repaso hoy"}</button></article>`}).join("");
+  c.querySelectorAll("[data-prebank-topic]").forEach(b=>b.addEventListener("click",()=>togglePrebankTopic(Number(b.dataset.prebankModule),Number(b.dataset.prebankTopic))));
+  rec?.querySelectorAll("[data-focus-prebank-topic]").forEach(b=>b.addEventListener("click",()=>document.querySelector(`[data-prebank-card="${b.dataset.focusPrebankTopic}"]`)?.scrollIntoView({behavior:"smooth",block:"center"})));
+}
+function isPrebankCompleted(id,i){return getTopicReviewStats(id,i).exposures>0}
+function togglePrebankTopic(id,i){
+  state.prebankHistory=state.prebankHistory||[];const today=todayKey(),existing=state.prebankHistory.findIndex(x=>Number(x.moduleId)===Number(id)&&Number(x.topicIndex)===Number(i)&&x.localDate===today);
+  if(existing>=0){state.prebankHistory.splice(existing,1);showToast("Repaso de hoy eliminado.")}else{state.prebankHistory.unshift({id:createId("prebank"),moduleId:Number(id),topicIndex:Number(i),topic:getModule(id).topics[i],localDate:today,createdAt:new Date().toISOString()});showToast("Repaso registrado para hoy.")}
+  saveState();renderAll();
+}
 
 function initModal(){document.getElementById("openErrorModal")?.addEventListener("click",openErrorModal);document.querySelectorAll("[data-close-modal]").forEach(x=>x.addEventListener("click",closeErrorModal));document.addEventListener("keydown",e=>{if(e.key==="Escape")closeErrorModal()})}
 function openErrorModal(){document.getElementById("errorModal")?.classList.add("open")}
@@ -1407,8 +1692,25 @@ function handleSettingsSubmit(e){
   showToast("Plan futuro recalculado. El historial previo permanece intacto.");
 }
 function renderSidebar(){const ctx=getOperationalContext(new Date()),moduleId=ctx.isStudyDay?ctx.moduleId:state.currentModuleId,m=getModule(moduleId),p=getModuleProgress(moduleId),progressBox=document.querySelector(".sidebar-progress"),hint=document.getElementById("sidebarProgressHint");document.getElementById("sidebarProgressTitle").textContent=m.shortTitle;document.getElementById("sidebarProgressLabel").textContent=`${p}%`;document.getElementById("sidebarProgressBar").style.width=`${p}%`;if(hint)hint.textContent="Progreso del plan actual";if(progressBox)progressBox.title="Este porcentaje refleja el trabajo completado respecto al plan actual. Si amplías la fecha del examen, BOARDS puede añadir jornadas futuras y el porcentaje puede bajar sin borrar tu progreso realizado.";document.getElementById("topCurrentWeek").textContent=`${getModulePosition(moduleId)} / 8`;document.getElementById("sidebarErrorCount").textContent=state.errors.length}
-function calculateStreak(){const dates=new Set(state.bankSessions.map(getSessionDateKey).filter(Boolean));if(!dates.size)return 0;let streak=0,cursor=normalizeDate(new Date());while(true){const k=dateKey(cursor);if(!dates.has(k)){if(streak===0&&k===todayKey()){cursor=addDays(cursor,-1);continue}break}streak++;cursor=addDays(cursor,-1)}return streak}
-function getModuleProgress(moduleId){const m=getModule(moduleId),completed=m.topics.filter((_,i)=>isPrebankCompleted(moduleId,i)).length,topicProgress=m.topics.length?completed/m.topics.length*100:0,blocks=getScheduleBlocksForModule(moduleId),dates=[...new Map(blocks.flatMap(b=>b.dates).map(d=>[dateKey(d),d])).values()];if(dates.length){const vals=dates.map(d=>getDailyCompletionData(dateKey(d),moduleId).percentage),avg=vals.length?vals.reduce((a,v)=>a+v,0)/vals.length:0;return Math.round(topicProgress*.4+avg*.6)}const old=FALLBACK_MODULE_TASKS.filter(t=>Boolean(state.plannerTasks?.[`week-${moduleId}`]?.[t.id])).length,total=m.topics.length+FALLBACK_MODULE_TASKS.length;return Math.round((completed+old)/total*100)}
+function calculateStreak(){
+  const schedule=getStudySchedule(),today=normalizeDate(new Date());
+  if(!schedule){const dates=new Set(state.bankSessions.map(getSessionDateKey).filter(Boolean));return dates.has(todayKey())?1:0}
+  const studyDays=schedule.assignments.filter(day=>day.date<=today).sort((a,b)=>b.date-a.date);
+  let streak=0,started=false;
+  for(const day of studyDays){
+    const key=dateKey(day.date),closure=getDayClosure(key,day.moduleId),hasQuestions=getQuestionStatsForDate(key,day.moduleId).questions>0;
+    if(closure?.status==="paused")continue;
+    if(closure?.status==="complete"||closure?.status==="partial"||hasQuestions){streak++;started=true;continue}
+    if(!started&&key===todayKey())continue;
+    break;
+  }
+  return streak;
+}
+function getModuleProgress(moduleId){
+  const m=getModule(moduleId),covered=m.topics.filter((_,i)=>getTopicReviewStats(moduleId,i).exposures>0).length,topicProgress=m.topics.length?covered/m.topics.length*100:0,blocks=getScheduleBlocksForModule(moduleId),dates=[...new Map(blocks.flatMap(b=>b.dates).map(d=>[dateKey(d),d])).values()];
+  if(dates.length){const vals=dates.map(d=>{const data=getDailyCompletionData(dateKey(d),moduleId);if(data.closure?.status==="paused")return null;if(data.closure?.status==="complete")return 100;if(data.closure?.status==="partial")return Math.max(data.routinePercentage,data.questionGoalPercentage*.5);return data.routinePercentage*.65+data.questionGoalPercentage*.35}).filter(v=>v!==null),avg=vals.length?vals.reduce((a,v)=>a+v,0)/vals.length:0;return Math.round(topicProgress*.4+avg*.6)}
+  const old=FALLBACK_MODULE_TASKS.filter(t=>Boolean(state.plannerTasks?.[`week-${moduleId}`]?.[t.id])).length,total=m.topics.length+FALLBACK_MODULE_TASKS.length;return Math.round((covered+old)/total*100);
+}
 function getOverallProgress(){const v=STUDY_MODULES.map(m=>getModuleProgress(m.id));return Math.round(v.reduce((a,b)=>a+b,0)/v.length)}
 
 function initDataActions(){document.getElementById("exportDataButton")?.addEventListener("click",exportData);document.getElementById("importDataInput")?.addEventListener("change",importData);document.getElementById("resetDataButton")?.addEventListener("click",resetData)}

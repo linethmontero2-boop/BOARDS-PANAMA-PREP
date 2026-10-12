@@ -1511,3 +1511,68 @@ input,select,textarea{font-size:15px}
     transition-duration:.01ms!important;
   }
 }
+
+/* =========================================================
+   V0.7B.3 · DAILY CLOSURE + TOPIC ANALYTICS + PRE-BANK V2
+   ========================================================= */
+.metric-status-text{font-size:18px!important;line-height:1.15}
+#todayClosureControls{margin-top:16px}
+.day-closure-box,.day-closure-status{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--surface-soft)}
+.day-closure-box>div:first-child,.day-closure-status>div:first-child{min-width:0;flex:1}
+.day-closure-box strong,.day-closure-status strong{display:block;font-size:15px;line-height:1.35}
+.day-closure-box p{max-width:760px;margin:5px 0 0;color:var(--text-soft);font-size:12px;line-height:1.55}
+.day-closure-status span{display:block;margin-bottom:4px;color:var(--text-faint);font-size:10px;font-weight:700;letter-spacing:.08em}
+.day-closure-status small{display:block;margin-top:5px;color:var(--text-soft);font-size:12px;line-height:1.5}
+.day-closure-status.success{border-color:color-mix(in srgb,var(--success) 34%,var(--border));background:color-mix(in srgb,var(--success-soft) 62%,var(--surface))}
+.day-closure-status.success strong{color:var(--success)}
+.day-closure-status.partial{border-color:color-mix(in srgb,var(--warning) 34%,var(--border));background:color-mix(in srgb,var(--warning-soft) 58%,var(--surface))}
+.day-closure-status.partial strong{color:var(--warning)}
+.day-closure-status.pause{border-color:color-mix(in srgb,var(--accent) 30%,var(--border));background:color-mix(in srgb,var(--accent-soft) 58%,var(--surface))}
+.day-closure-status.pause strong{color:var(--accent)}
+.day-closure-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.daily-task-action:disabled{opacity:.5;cursor:not-allowed}
+
+.today-topic-copy{min-width:0;flex:1}
+.today-topic-reason{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--blue-soft);color:var(--text-soft);font-size:12px;line-height:1.55}
+.topic-priority-chip{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:700;line-height:1.2;white-space:nowrap}
+.topic-priority-chip.high{background:var(--danger-soft);color:var(--danger)}
+.topic-priority-chip.reinforce{background:var(--warning-soft);color:var(--warning)}
+.topic-priority-chip.maintain{background:var(--success-soft);color:var(--success)}
+.topic-priority-chip.uncovered{background:var(--blue-soft);color:var(--text-soft)}
+.session-system-sub{display:inline-flex;padding:3px 6px;border-radius:999px;background:var(--blue-soft);color:var(--text-soft);font-size:9px;font-weight:600}
+
+.prebank-recommendation-panel{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(0,1.35fr);gap:18px;margin:0 0 16px;padding:18px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--border));border-radius:16px;background:linear-gradient(135deg,var(--surface),var(--accent-soft));box-shadow:var(--shadow-sm)}
+.prebank-recommendation-panel>div:first-child>strong{display:block;margin-bottom:6px;font-size:18px}
+.prebank-recommendation-panel p{margin:0;color:var(--text-soft);font-size:12px;line-height:1.6}
+.prebank-recommendation-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.prebank-rec-chip{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:2px 8px;min-height:86px;padding:11px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);text-align:left}
+.prebank-rec-chip b{grid-row:1/3;width:24px;height:24px;display:grid;place-items:center;border-radius:8px;background:var(--surface-soft);color:var(--accent);font-size:10px}
+.prebank-rec-chip>span{font-size:12px;font-weight:700;line-height:1.35}
+.prebank-rec-chip small{color:var(--text-soft);font-size:10px;line-height:1.4}
+.prebank-rec-chip.high{border-color:color-mix(in srgb,var(--danger) 30%,var(--border))}
+.prebank-rec-chip.reinforce{border-color:color-mix(in srgb,var(--warning) 30%,var(--border))}
+.prebank-rec-chip.maintain{border-color:color-mix(in srgb,var(--success) 30%,var(--border))}
+.prebank-rec-chip:hover{transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.topic-card-topline{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}
+.topic-card-topline .topic-index{margin:0}
+.topic-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:10px 0 14px}
+.topic-metrics span{padding:8px;border:1px solid var(--border);border-radius:10px;background:var(--surface-soft);color:var(--text-soft);font-size:10px;line-height:1.35}
+.topic-metrics b{display:block;margin-bottom:2px;color:var(--text);font-size:12px}
+.topic-card.completed{border-color:color-mix(in srgb,var(--success) 55%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--success) 10%,transparent)}
+.topic-card p strong{color:var(--text)}
+
+@media(max-width:1180px){
+  .prebank-recommendation-panel{grid-template-columns:1fr}
+  .prebank-recommendation-list{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:900px){
+  .prebank-recommendation-list{grid-template-columns:1fr}
+  .day-closure-box,.day-closure-status{align-items:stretch;flex-direction:column}
+  .day-closure-actions{justify-content:flex-start}
+}
+@media(max-width:680px){
+  .topic-priority-chip{white-space:normal;text-align:center}
+  .topic-metrics{grid-template-columns:1fr 1fr}
+  .day-closure-actions{flex-direction:column;align-items:stretch}
+  .day-closure-actions .button,.day-closure-status .button{width:100%}
+}
